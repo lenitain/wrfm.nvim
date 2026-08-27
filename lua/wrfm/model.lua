@@ -24,6 +24,8 @@ local uv = vim.uv or vim.loop
 ---@field yaw? number initial yaw in degrees
 ---@field auto_spin? boolean start spinning right after render()
 ---@field spin_speed? number radians per frame
+---@field pause_spin_when_unfocused? boolean pause auto-spin while the host
+--   window is not focused (default: pause_spin_when_unfocused config)
 ---@field watch? boolean hot-reload the source file (default: default_watch)
 ---@field border? boolean float border and title (default true; false = seamless)
 ---@field virt_lines_above? boolean inline preview above (true, default) or below the anchor line
@@ -54,6 +56,8 @@ local uv = vim.uv or vim.loop
 ---@field fit_dist number auto-fit camera distance for current geometry
 ---@field auto_spin boolean
 ---@field spin_speed number
+---@field pause_spin_when_unfocused boolean spin pauses while the host window
+--   is not focused
 ---@field watch boolean hot-reload enabled for this model
 ---@field border boolean float border/title enabled (seamless overlay when false)
 ---@field watch_started? boolean watcher is running
@@ -190,6 +194,27 @@ function Model:_alive()
   return true
 end
 
+---Whether the window the user is looking at is the one this model decorates.
+-- Out-of-focus models pause their spin (see pause_spin_when_unfocused)
+-- instead of repainting an invisible frame every tick behind other windows
+-- (a fullscreen Yazi/terminal float over the dashboard logo, a split taken
+-- over by an editor, ...). Inline and bound models key off the buffer shown
+-- in the current window; floats key off their anchor (or construction) window.
+---@private
+---@return boolean
+function Model:_window_focused()
+  local api = vim.api
+  local current_buf = api.nvim_win_get_buf(api.nvim_get_current_win())
+  if self.inline or not self.owns_buffer then
+    return self.bufnr == current_buf
+  end
+  local host = valid_anchor(self.anchor_win) or valid_anchor(self.host_win)
+  if not host then
+    return false -- host window is gone; nothing to decorate
+  end
+  return api.nvim_get_current_win() == host
+end
+
 function Model:_ensure_window()
   local api = vim.api
   self:_resolve_size()
@@ -308,6 +333,11 @@ function Model:_tick()
     self:clear()
     return
   end
+  if self.pause_spin_when_unfocused and not self:_window_focused() then
+    -- Host window lost focus: keep the timer (so spin resumes automatically
+    -- when focus returns) but skip this frame's repaint entirely.
+    return
+  end
   self:_spin_local(self.spin_speed)
   self:_repaint()
 end
@@ -365,6 +395,10 @@ function Model.from_file(path, options)
     fit_dist = renderer.fit_distance(data.vertices),
     auto_spin = opt(options.auto_spin, cfg.default_auto_spin),
     spin_speed = opt(options.spin_speed, cfg.default_spin_speed),
+    pause_spin_when_unfocused = opt(
+      options.pause_spin_when_unfocused,
+      cfg.pause_spin_when_unfocused
+    ),
     watch = opt(options.watch, cfg.default_watch),
     border = opt(options.border, true),
     virt_lines_above = options.virt_lines_above ~= false,

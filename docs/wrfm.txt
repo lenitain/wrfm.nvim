@@ -141,6 +141,9 @@ call are ignored (so repeating a call never stacks viewers). Raises when
     pitch/yaw   initial angles in degrees
     auto_spin   start spinning right after render()
     spin_speed  radians per frame
+    pause_spin_when_unfocused
+                pause auto-spin while the host window is not focused
+                (default: the pause_spin_when_unfocused setup option)
     watch       hot-reload the file (default: default_watch)
     border      float border and title (default true); false renders a
                 seamless frameless overlay - only the braille art shows,
@@ -347,6 +350,13 @@ Spin timers pause automatically when Neovim loses focus (|FocusLost|) or is
 suspended (|VimSuspend|), and resume on |FocusGained| / |VimResume|. Views
 stay visible - braille frames cost nothing to keep on screen. Manually
 stopped spins (|wrfm.model-methods| set_spin(false)) are never resurrected.
+
+By default (pause_spin_when_unfocused = true) a model whose host window is
+not the focused window stops repainting: a dashboard logo hidden behind a
+fullscreen terminal float, or a preview in a split you stopped looking at,
+no longer burns a frame every tick. The timer keeps running, so the spin
+resumes the moment the host window regains focus. Disable the option to keep
+background models spinning unconditionally.
 Bursts of relayout/reload events within one event-loop turn coalesce into a
 single repaint.
 

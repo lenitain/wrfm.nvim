@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+#### Animation and controls
+
+- New option `pause_spin_when_unfocused` (default `true`): a spinning model
+  whose host window is not the focused window stops repainting instead of
+  burning a frame every tick behind other windows. The timer keeps running,
+  so the spin resumes the moment focus returns to the host window — no extra
+  autocmd machinery needed. Inline and bound models key off the buffer shown
+  in the current window; floats key off their anchor (or construction)
+  window. Per-model override via
+  `from_file({ pause_spin_when_unfocused = ... })`.
+- Why: the dashboard-logo use case kept spinning at full fps while hidden
+  under a fullscreen terminal float (e.g. Yazi) and during the switch into
+  a file, producing a stutter right before the file opened — it looked like
+  the model had to be "released" first. The teardown itself is
+  sub-millisecond (measured ~0.3–0.5 ms); the visible cost was the hidden
+  60fps repaint, which is why deferring cleanup asynchronously could not
+  fix it. With the new option, repaints drop to zero while the logo is
+  covered and resume instantly on refocus.
+
 ## [0.0.1] - 2026-08-27
 
 Initial release.

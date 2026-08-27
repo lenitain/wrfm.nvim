@@ -131,6 +131,66 @@ describe("e2e", function()
     model:clear()
   end)
 
+  it("spin pauses while the host window is unfocused", function()
+    local model = wrfm.from_file(anvil, { width = 30, height = 10, spin_speed = 0.3 })
+    model:render()
+    local host_win = api.nvim_get_current_win()
+    assert.are.equal(host_win, model.host_win, "precondition: host is the current window")
+
+    local yaw0 = model.yaw
+    model:_tick()
+    assert.is_true(math.abs(model.yaw - yaw0) > 1e-9, "focused model advances on tick")
+
+    -- Focus a second window: the float model is now out of focus.
+    vim.cmd("vsplit")
+    assert.is_true(api.nvim_get_current_win() ~= host_win, "precondition: split took focus")
+    local frame_before = api.nvim_buf_get_lines(model.bufnr, 0, -1, false)
+    local yaw_hidden = model.yaw
+    for _ = 1, 5 do
+      model:_tick()
+    end
+    assert.is_true(math.abs(model.yaw - yaw_hidden) < 1e-9, "unfocused model does not advance yaw")
+    local frame_after = api.nvim_buf_get_lines(model.bufnr, 0, -1, false)
+    local unchanged = true
+    for i, line in ipairs(frame_before) do
+      if line ~= (frame_after[i] or "") then
+        unchanged = false
+        break
+      end
+    end
+    assert.is_true(unchanged, "unfocused model skips the per-tick repaint")
+
+    -- Focus returns to the host window: spin resumes.
+    vim.cmd("wincmd p")
+    assert.are.equal(host_win, api.nvim_get_current_win(), "precondition: focus back on host")
+    local yaw_back = model.yaw
+    model:_tick()
+    assert.is_true(math.abs(model.yaw - yaw_back) > 1e-9, "refocused model advances again")
+    model:clear()
+  end)
+
+  it("pause_spin_when_unfocused=false keeps background models spinning", function()
+    local model = wrfm.from_file(anvil, {
+      width = 30,
+      height = 10,
+      spin_speed = 0.3,
+      pause_spin_when_unfocused = false,
+    })
+    model:render()
+    local host_win = api.nvim_get_current_win()
+    vim.cmd("vsplit")
+    assert.is_true(api.nvim_get_current_win() ~= host_win, "precondition: split took focus")
+    local yaw_hidden = model.yaw
+    for _ = 1, 5 do
+      model:_tick()
+    end
+    assert.is_true(
+      math.abs(model.yaw - yaw_hidden) > 1e-9,
+      "opt-out keeps advancing while unfocused"
+    )
+    model:clear()
+  end)
+
   it("auto-spin turns the model around its own Y axis", function()
     local r = require("wrfm.renderer")
     local model = wrfm.from_file(cube, { width = 40, height = 12, auto_spin = false })

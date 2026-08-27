@@ -85,6 +85,10 @@ require("wrfm").setup({
   default_auto_spin = true,   -- start spinning after render()
   default_spin_speed = 0.02,  -- radians per frame
   fps = 30,                   -- animation frame rate
+  -- Skip repaints while the model's host window is unfocused (e.g. a
+  -- fullscreen terminal float covering a dashboard logo). The timer keeps
+  -- running, so the spin resumes instantly when focus returns.
+  pause_spin_when_unfocused = true,
 
   -- Hot reload
   default_watch = true,       -- auto-update when .wrfm file changes
@@ -427,6 +431,13 @@ Spin timers pause automatically when Neovim loses focus (`FocusLost`) or is
 suspended (`VimSuspend`), and resume on `FocusGained` / `VimResume`. Views
 stay visible — braille frames cost nothing to keep on screen. Manually
 stopped spins are never resurrected by focus events.
+
+By default (`pause_spin_when_unfocused = true`) a model whose host window is
+not the focused window stops repainting: a dashboard logo hidden behind a
+fullscreen terminal file-manager float, or a preview in a split you stopped
+looking at, no longer burns a frame every tick. The timer keeps running, so
+the spin resumes the moment you focus the host window again. Disable the
+option to keep background models spinning unconditionally.
 
 Bursts of relayout/reload events within one event-loop turn coalesce into a
 single repaint.

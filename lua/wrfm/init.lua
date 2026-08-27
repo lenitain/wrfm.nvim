@@ -16,6 +16,8 @@ local Model = require("wrfm.model")
 ---@field default_auto_spin boolean spin by default after render()
 ---@field default_spin_speed number radians per frame
 ---@field default_watch boolean hot-reload source files by default
+---@field pause_spin_when_unfocused boolean pause auto-spin while the model's
+--   host window is not focused (default true)
 ---@field fps number animation frame rate
 ---@field integrations WrfmIntegrationConfig
 
@@ -42,6 +44,7 @@ local KNOWN_KEYS = {
   default_auto_spin = true,
   default_spin_speed = true,
   default_watch = true,
+  pause_spin_when_unfocused = true,
   fps = true,
   integrations = true,
 }
@@ -70,6 +73,11 @@ M.config = {
   default_auto_spin = true,
   default_spin_speed = 0.02,
   default_watch = true,
+  -- A spinning model repaints its buffer every frame; when the window it
+  -- decorates loses focus (a fullscreen Yazi/terminal float over the
+  -- dashboard, a split taken over by an editor), that repaint is invisible
+  -- but still burns CPU and redraws. Pause the spin until focus returns.
+  pause_spin_when_unfocused = true,
   fps = 60,
   integrations = {
     wrfm = {
