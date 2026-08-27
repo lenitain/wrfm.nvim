@@ -1,0 +1,12 @@
+wrfm 1
+vertices 4 edges 6
+v 1 1 1
+v 1 -1 -1
+v -1 1 -1
+v -1 -1 1
+e 0 1
+e 0 2
+e 0 3
+e 1 2
+e 1 3
+e 2 3

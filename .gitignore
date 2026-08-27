@@ -1,0 +1,31 @@
+# Test artifacts
+.tests/
+/test
+
+# Environment and secrets
+.env
+.env.*
+*.private
+*.secret
+.actrc.local
+
+# LuaRocks
+.luarocks/
+*.rock
+*.src.rock
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+
+# Neovim logs
+/nvim.log
+
+# Golden fixtures are version-controlled (whitelist)
+# tests/fixtures/**/*.braille

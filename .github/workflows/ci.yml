@@ -1,0 +1,57 @@
+name: CI
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Run tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        neovim_version: ["stable", "nightly"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore test data
+        uses: actions/cache@v4
+        with:
+          path: .tests
+          key: ${{ runner.os }}-lazy-minit-${{ matrix.neovim_version }}
+      - name: Install system dependencies
+        # lazy.minit builds Lua 5.1 via hererocks with LUA_USE_READLINE;
+        # slim act images (catthehacker/ubuntu) lack readline dev headers,
+        # GitHub-hosted runners may have them preinstalled.
+        run: |
+          if ! [ -f /usr/include/readline/readline.h ]; then
+            sudo apt-get update && sudo apt-get install -y libreadline-dev
+          fi
+      - name: Setup Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim_version }}
+      - name: Run tests
+        env:
+          NEOVIM_VERSION: ${{ matrix.neovim_version }}
+        run: nvim -l tests/busted.lua
+
+  format:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - name: Check formatting
+        run: mise run format-check

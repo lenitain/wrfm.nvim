@@ -1,0 +1,9 @@
+# wrfm render /home/lenitain/.projects/wrfm.nvim/tests/fixtures/models/anvil-mini.wrfm --format braille --views= --pitch=0 --yaw=0 --width=17 --height=7
+# generated-with: wrfm 0.1.0
+
+      ⣤⣤⣤⣤⡄
+     ⢠⣿⣿⣿⣿⣷⡄
+     ⠸⠿⠿⠿⠿⠿⠇
+
+
+

@@ -1,0 +1,18 @@
+return {
+  _all = {
+    coverage = false,
+    lpath = "lua/?.lua;lua/?/init.lua;tests/?.lua;tests/?/init.lua",
+    pattern = ".*_spec%.lua",
+    ROOT = { "tests" },
+    verbose = true,
+    ["suppress-pending"] = false,
+    ["show-error-list"] = true,
+  },
+  _coverage = {
+    coverage = true,
+    lpath = "lua/?.lua;lua/?/init.lua;tests/?.lua;tests/?/init.lua",
+    pattern = ".*_spec%.lua",
+    ROOT = { "tests" },
+    verbose = true,
+  },
+}

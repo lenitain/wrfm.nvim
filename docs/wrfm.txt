@@ -1,0 +1,600 @@
+*wrfm.txt*   Braille wireframe viewer for Neovim
+
+Author:  wrfm.nvim contributors
+License: MIT
+
+==============================================================================
+INTRODUCTION                                                    *wrfm*
+
+wrfm.nvim renders `.wrfm` 3D wireframe models inside Neovim using Unicode
+braille characters in a floating window. It needs nothing but Neovim >= |0.11|
+and works over ssh/tmux where image protocols do not.
+
+Features~
+- Zero dependencies: only Neovim >= 0.11 required
+- Braille rendering: Unicode braille characters (U+2800-U+28FF)
+- Multiple viewer modes: floating window and inline preview
+- Live hot-reload: auto-update when .wrfm files change
+- Auto-spin animation: smooth rotation with libuv timers
+- Works everywhere: ssh, tmux, tty, any terminal
+
+Opening a `.wrfm` file sets `filetype=wrfm` (shipped ftdetect), which arms
+the auto-attach integration below.
+
+Run `:helptags ALL` after installation to enable the tags below.
+
+==============================================================================
+SETUP                                                           *wrfm.setup*
+
+>lua
+    require("wrfm").setup({
+      -- Canvas size (braille character cells)
+      -- nil = auto-calculate from window dimensions
+      default_width = nil,
+      default_height = nil,
+
+      -- Size caps
+      max_width = nil,            -- hard cap in columns (nil = unlimited)
+      max_height = nil,           -- hard cap in rows (nil = unlimited)
+      max_width_window_percentage = 80,   -- % cap relative to host window
+      max_height_window_percentage = 60,  -- % cap relative to host window
+
+      -- Camera
+      default_pitch = 30,         -- initial pitch (degrees)
+      default_distance = nil,     -- camera distance; nil = auto-fit
+
+      -- Animation
+      default_auto_spin = true,   -- spin after render()
+      default_spin_speed = 0.02,  -- radians per frame
+      fps = 30,                   -- animation frame rate
+
+      -- Hot reload
+      default_watch = true,       -- hot-reload .wrfm files by default
+
+      -- Inline preview
+      integrations = {
+        wrfm = {
+          enabled = true,                     -- auto-attach for *.wrfm
+          clear_in_insert_mode = false,       -- hide during insert mode
+          only_render_at_cursor = false,      -- show only at cursor
+          cursor_mode = "popup",              -- "popup" or "inline"
+          filetypes = { "wrfm" },
+        },
+      },
+    })
+<
+
+`setup()` is optional. Unknown keys raise an error.
+
+The size caps clamp derived AND explicit sizes: a canvas never exceeds
+`max_width_window_percentage%` of its host window (`max_height_window_
+percentage%` for rows) nor the absolute `max_width`/`max_height`, whichever
+is smaller. Per-model overrides and an `ignore_max_size` opt-out exist (see
+|wrfm.from_file()|).
+
+==============================================================================
+QUICK START                                                 *wrfm.quickstart*
+
+1. Install Neovim >= 0.11
+2. Install the plugin (see |wrfm.installation|)
+3. Open a .wrfm file or run |:Wrfm|
+4. Check |wrfm.howto| for common tasks
+
+Requirements~
+- Neovim >= 0.11 (uses extmark virtual lines and modern APIs)
+- Terminal with Unicode braille support (virtually all modern terminals)
+
+Because output is ordinary text, it works everywhere Neovim does — including
+tmux, ssh and tty. No graphics protocols, no ImageMagick, no external
+dependencies.
+
+==============================================================================
+INSTALLATION                                                 *wrfm.installation*
+
+lazy.nvim~
+>lua
+    {
+      "you/wrfm.nvim",
+      opts = {},
+    }
+<
+
+pckr.nvim~
+>lua
+    use { "you/wrfm.nvim", config = function() require("wrfm").setup({}) end }
+<
+
+mini.deps~
+>lua
+    add({ source = "you/wrfm.nvim" })
+    later(function() require("wrfm").setup({}) end)
+<
+
+Manual~
+Copy `lua/`, `plugin/`, `doc/`, and `ftdetect/` to your Neovim runtimepath,
+then run `:helptags ALL`.
+
+`setup()` is optional; every option has a default.
+
+==============================================================================
+API                                                        *wrfm.from_file*
+
+                                                          *wrfm.from_file()*
+    wrfm.from_file({path} [, {options}])
+
+Load and register a model. Returns a |WrfmModel|. An id is assigned from
+`options.id` or sequentially as "model-N". Passing an `options.id` that is
+already live returns the existing model unchanged - other options in that
+call are ignored (so repeating a call never stacks viewers). Raises when
+{path} cannot be read or parsed. Options:
+
+    window      anchor the float to this window instead of the editor grid
+    buffer      draw into this buffer instead of opening a float
+    width/height  canvas size in braille cells (both derived by default)
+    x/y         offset from the centered float placement in editor cells;
+                applying them overrides a manual move() position
+    max_width_window_percentage/max_height_window_percentage
+                per-model percentage caps overriding the setup defaults
+    ignore_max_size  lift percentage and absolute size caps for this model
+                (terminal bounds still apply)
+    distance    pin the camera distance (nil auto-fits)
+    pitch/yaw   initial angles in degrees
+    auto_spin   start spinning right after render()
+    spin_speed  radians per frame
+    watch       hot-reload the file (default: default_watch)
+    border      float border and title (default true); false renders a
+                seamless frameless overlay - only the braille art shows,
+                background merged into the host window (image.nvim look)
+    virt_lines_above  inline preview above the anchor line (true, default)
+                or below it; ignored outside inline mode
+    namespace   registry tag for get_models() filtering
+    id          stable registry identity
+
+                                                        *wrfm.model-methods*
+A WrfmModel exposes:
+
+    model:render([{geometry}])
+                          draw now; opens/creates the view. With {geometry}
+                          (`{ width =, height =, x =, y = }`), the given
+                          axes become the new canvas size / placement offset
+                          first and a live float is resized or shifted in
+                          place; the change persists across later renders.
+                          Returns false if rendering is globally disabled or
+                          queued until |VimEnter| (silent no-op). Before the
+                          UI exists the first draw is deferred to VimEnter,
+                          when terminal dimensions are known.
+    model:move({x}, {y})  reposition the floating window to editor-relative
+                          coordinates (0-based); size/border/title are kept.
+                          No-op for inline and bound-buffer models.
+    model:hide()          hide the view without unregistering: timers stop,
+                          floats close, bound buffers restore; camera, spin
+                          and watch state is preserved for show().
+    model:show()          restore a hidden model; no-op when already
+                          visible. Returns false while rendering is globally
+                          disabled.
+    model:clear()         destroy the view, stop timers/watchers, unregister.
+    model:set_spin(bool)  toggle animation (nil inverts current state).
+                          Spinning is a relative rotation around the model's
+                          own Y axis (wireforge's Space auto-spin), not a
+                          world-frame turntable.
+    model:set_pitch(deg)  tilt to {deg} degrees via a world-frame delta
+                          (wireforge arrow-key semantics) and repaint.
+    model:set_distance(d) pin camera distance (nil = auto-fit) and repaint.
+
+The live orientation is kept as a rotation matrix, so spin accumulates
+relative to the current pose; `pitch`/`yaw` only mirror the display angles.
+
+Viewer floats are decorations: they open non-focusable, so your keys keep
+going to the window you were in. Close viewers with |:WrfmClear|.
+
+                                                               *wrfm.api*
+Registry and global switch:
+
+    wrfm.get_models([{opts}])  live models; filter with {window=winid},
+                               {buffer=bufnr} or {namespace=tag}
+                               (conjunctive).
+    wrfm.clear([{id}])        destroy one viewer by id (every match), or all
+                               without arg.
+    wrfm.hide([{id}])         hide views without unregistering (one by id or
+                               all); show()/enable() bring them back with
+                               their view state intact.
+    wrfm.show([{id}])         restore hidden models (one by id, or all).
+    wrfm.enable()             re-render every registered model.
+    wrfm.disable()            hide views; models stay registered; render()
+                               becomes a silent no-op returning false.
+    wrfm.is_enabled()         current switch state.
+    wrfm.current              most recently created model (may be nil).
+
+                                                            *wrfm.attach()*
+    wrfm.attach({bufnr} [, {opts}])
+
+Attach an inline preview to {bufnr}.  The buffer's filename is used to locate
+the `.wrfm` source unless `opts.path` is given.  Attaching to a buffer that
+already carries an inline preview re-renders it instead of stacking a second
+extmark/timer. Returns a |WrfmModel|.
+
+                                                           *wrfm.detach()*
+    wrfm.detach({bufnr})
+
+Remove all inline previews from {bufnr}.
+
+==============================================================================
+COMMANDS                                                    *wrfm.commands*
+
+                                                                 *:Wrfm*
+:Wrfm [file]    View {file} (default: current buffer's file) in a floating
+                window. Repeating the call re-renders the existing viewer
+                for that file instead of stacking a second one.
+
+                                                            *:WrfmClear*
+:WrfmClear [id] With an id, close exactly that viewer; without, close all.
+
+                                                             *:WrfmList*
+:WrfmList       List live viewers: id, mode, spin state, source path.
+
+                                                               *:WrfmHere*
+:WrfmHere       Attach an inline preview to the current buffer.
+
+                                                            *:WrfmDetach*
+:WrfmDetach     Remove the inline preview from the current buffer.
+
+                                                           *:WrfmReport*
+:WrfmReport     Open a diagnostic report in a floating window: Neovim and
+                platform info, active configuration, a live snapshot of every
+                registered model (id, mode, namespace, canvas size, camera,
+                spin/watch state, buffer/window ids) and resource counts.
+
+==============================================================================
+HOW TO                                                          *wrfm.howto*
+
+Common tasks and how to accomplish them.
+
+Enable / disable / get status~
+>lua
+    require("wrfm").enable()   -- re-render everything registered
+    require("wrfm").disable()  -- hide views; registry intact
+    print(require("wrfm").is_enabled()) -- bool
+<
+
+View a .wrfm file~
+>vim
+    :Wrfm /path/to/model.wrfm
+    :Wrfm  " view current buffer's file
+<
+
+Attach inline preview~
+>vim
+    :WrfmHere       " toggle inline preview for current buffer
+    :WrfmDetach     " remove inline preview
+<
+
+Control spinning animation~
+>lua
+    local model = require("wrfm").current
+    model:set_spin(false)      -- stop spinning
+    model:set_spin(true)       -- resume spinning
+    model:set_pitch(0)         -- front view
+    model:set_pitch(90)        -- top-down view
+<
+
+Adjust camera distance~
+>lua
+    local model = require("wrfm").current
+    model:set_distance(2)      -- closer (smaller value = closer)
+    model:set_distance(nil)    -- auto-fit to model size
+<
+
+Reposition and resize~
+>lua
+    local model = require("wrfm").current
+    model:render({ width = 60, height = 30 })  -- resize canvas
+    model:render({ x = -4, y = 2 })            -- shift float
+    model:move(10, 5)                          -- absolute position
+<
+
+Work with multiple models~
+>lua
+    local wrfm = require("wrfm")
+    local anvil = wrfm.from_file("anvil.wrfm", { id = "anvil" })
+    local cube = wrfm.from_file("cube.wrfm", { id = "cube" })
+    wrfm.clear("anvil")  -- clear specific model
+    wrfm.clear()          -- clear all
+<
+
+Hide and show without destroying~
+>lua
+    local wrfm = require("wrfm")
+    wrfm.hide()              -- hide every view
+    wrfm.hide("anvil")       -- hide one
+    wrfm.show("anvil")       -- restore one
+    wrfm.show()              -- restore all
+<
+
+Use as dashboard logo~
+>lua
+    vim.api.nvim_create_autocmd({ "BufNewFile", "BufReadPost" }, {
+      pattern = "dashboard",
+      once = true,
+      callback = function(args)
+        local wrfm = require("wrfm")
+        local model = wrfm.from_file(vim.fn.stdpath("config") .. "/logo.wrfm", {
+          id = "dashboard-logo",
+          width = 44,
+          height = 13,
+          spin_speed = 0.015,
+        })
+        model:render()
+        model:move(math.floor((vim.o.columns - 44) / 2), 3)
+        vim.api.nvim_create_autocmd("BufUnload", {
+          buffer = args.buf,
+          once = true,
+          callback = function() wrfm.clear("dashboard-logo") end,
+        })
+      end,
+    })
+<
+
+Get diagnostic information~
+>vim
+    :WrfmReport        " floating diagnostic report
+    :checkhealth wrfm  " quick health check
+<
+
+==============================================================================
+LIFECYCLE                                                    *wrfm.lifecycle*
+
+Spin timers pause automatically when Neovim loses focus (|FocusLost|) or is
+suspended (|VimSuspend|), and resume on |FocusGained| / |VimResume|. Views
+stay visible - braille frames cost nothing to keep on screen. Manually
+stopped spins (|wrfm.model-methods| set_spin(false)) are never resurrected.
+Bursts of relayout/reload events within one event-loop turn coalesce into a
+single repaint.
+
+Stale contexts are swept automatically: after |TabEnter|, |BufEnter| or
+|WinClosed| every model whose window was closed, whose buffer was deleted, or
+whose anchor window switched content is torn down - including non-spinning
+models that no tick would ever inspect. Use |wrfm.hide()| when a view should
+survive such transitions instead.
+
+Rendering pauses while the command-line window is open (opening floats under
+it would raise), and a programmatic first render issued before the UI exists
+(e.g. from init.lua) is queued until |VimEnter| so terminal dimensions are
+known before derived canvas sizes clamp against them.
+
+==============================================================================
+INLINE PREVIEW                                              *wrfm.inline*
+
+The inline preview renders the wireframe as braille text inside the buffer
+using extmark virtual lines.  The text scrolls with the buffer naturally;
+no graphics protocol or special terminal is needed.
+
+Use `:WrfmHere` to toggle the preview, or configure auto-attach:
+
+>lua
+    require("wrfm").setup({
+      integrations = {
+        wrfm = {
+          enabled = true,                     -- auto-attach for *.wrfm
+          clear_in_insert_mode = false,       -- hide during insert mode
+          only_render_at_cursor = false,      -- show only at cursor
+          cursor_mode = "popup",              -- "popup" or "inline"
+          filetypes = { "wrfm" },
+        },
+      },
+    })
+<
+
+When `only_render_at_cursor` is true, the preview appears near the cursor
+line only.  `cursor_mode = "popup"` shows a temporary floating window;
+`"inline"` anchors the extmark to the cursor line.  In cursor-only mode the
+preview follows the cursor: popup mode reopens at each new cursor position
+and inline mode re-anchors the extmark, instead of closing on the first
+movement.
+
+Pass `virt_lines_above = false` (per model) to render an inline preview
+below its anchor line rather than above it.
+
+When `clear_in_insert_mode` is true, all inline previews for the current
+buffer are hidden during insert mode and restored on |InsertLeave|.
+
+The old `from_file({ buffer = ... })` pattern that overwrote buffer content
+is deprecated; use `wrfm.attach()` instead for a non-destructive preview.
+
+==============================================================================
+DASHBOARD                                                  *wrfm.dashboard*
+
+A spinning wireframe makes a live logo for start screens. Unlike image
+protocols it renders over ssh/tmux with zero dependencies, and the float
+never steals focus. Clean up when the dashboard closes:
+
+>lua
+    -- pattern per plugin: "dashboard" (dashboard-nvim),
+    -- "alpha" (alpha-nvim), "snacks_dashboard" (snacks.nvim)
+    vim.api.nvim_create_autocmd({ "BufNewFile", "BufReadPost" }, {
+      pattern = "dashboard",
+      once = true,
+      callback = function(args)
+        local wrfm = require("wrfm")
+        local model = wrfm.from_file(vim.fn.stdpath("config") .. "/logo.wrfm", {
+          id = "dashboard-logo",
+          width = 44,
+          height = 13,
+          spin_speed = 0.015,
+        })
+        model:render()
+        model:move(math.floor((vim.o.columns - 44) / 2), 3)
+        vim.api.nvim_create_autocmd("BufUnload", {
+          buffer = args.buf,
+          once = true,
+          callback = function()
+            wrfm.clear("dashboard-logo")
+          end,
+        })
+      end,
+    })
+<
+
+==============================================================================
+HOT RELOAD                                                *wrfm.hot-reload*
+
+With watch enabled (the default), viewers follow their source file and
+repaint ~150ms after changes, preserving pitch/yaw/distance/spin state.
+
+Inline previews also follow *unsaved* edits: an `on_lines` watcher on the
+buffer re-parses the buffer content as you type, so the preview updates
+without a `:write`. The two channels dedup against the last successfully
+parsed text - writing the already-shown content back to disk does not
+repaint.
+
+- Directory-level fs_event watching survives editors replacing files via
+  rename; filesystems lacking fs_event fall back to a 2s poll.
+- Unparseable mid-edit states (typed or unsaved) keep the last good frame
+  and warn once until the content becomes valid again.
+- Deleting the file keeps the last frame and stops the watcher.
+- Pass `watch = false` for a static snapshot (disables both channels).
+
+==============================================================================
+HEALTH CHECK                                              *wrfm.checkhealth*
+
+`:checkhealth wrfm` verifies the Neovim version floor, the render pipeline,
+the parser, timer availability, prints the active configuration, and reports
+whether the `wrfm` CLI is on PATH (only needed to regenerate test fixtures).
+
+==============================================================================
+FAQ                                                            *wrfm.faq*
+
+Why braille?           Plain text renders anywhere Neovim runs - ssh, tmux,
+                       screen - without image protocol support.
+vs. wireforge TUI?     Edit in the TUI; preview beside your editor here.
+                       Hot reload bridges the two.
+Performance?           A typical frame rasterizes in well under a millisecond;
+                       animation runs on a libuv timer at `fps`.
+Over ssh/tmux?         Yes - braille characters are plain Unicode text. No
+                       passthrough, no special configuration needed.
+Terminal compatibility?Works with virtually all modern terminals: iTerm2,
+                       Alacritty, Kitty, WezTerm, Ghostty, foot, Windows
+                       Terminal, GNOME Terminal, Konsole, and more.
+What .wrfm files?      Any valid .wrfm file. See the wireforge project for
+                       format details and model generators.
+
+==============================================================================
+DEVELOPMENT                                                *wrfm.development*
+
+Quick start~
+>sh
+    # Install mise (tool version manager)
+    curl https://mise.run | sh
+
+    # Install pinned tool versions
+    mise install
+
+    # Run tests
+    mise run test
+
+    # Format code
+    mise run format
+<
+
+Available tasks~
+>sh
+    mise run help           # show all available tasks
+    mise run test           # full test suite (busted)
+    mise run test-verbose   # tests with colored output
+    mise run test-tap       # tests with TAP output
+    mise run test-minimal   # tests with minimal dot output
+    mise run coverage       # tests with LuaCov coverage
+    mise run format         # stylua-format lua/, plugin/, tests/
+    mise run format-check   # CI-style formatting gate
+    mise run golden         # regenerate golden fixtures (needs wrfm CLI)
+    mise run test-ci        # run GitHub Actions CI locally with act
+    mise run test-ci-stable # run stable Neovim CI tests
+    mise run test-ci-nightly # run nightly Neovim CI tests
+<
+
+Development environment~
+
+wrfm.nvim uses mise (https://mise.jdx.dev/) for task running and tool
+version management. This replaces Makefile + Nix with a single tool.
+
+Setting up the development environment:1. Install mise
+>sh
+    curl https://mise.run | sh
+<2. Install pinned tool versions
+>sh
+    mise install
+<   This installs the exact versions specified in .tool-versions:
+   - act — local GitHub Actions runner   - stylua — Lua formatter3. Install test dependencies
+>sh
+    luarocks install busted
+    luarocks install nlua
+    luarocks install luassert
+<4. Run the test suite
+>sh
+    mise run test
+<5. Check formatting
+>sh
+    mise run format-check
+<
+
+Why mise instead of Makefile + Nix?~
+- Single tool: handles both task running and tool version pinning
+- No Nix dependency: works on any system without Nix
+- Cross-platform: works on Linux, macOS, and Windows (WSL)
+- Simpler: no Makefile boilerplate, no flake.nix complexity
+- Reproducible: .tool-versions locks exact tool versions
+
+The trade-off is that Nix provides more complete dependency isolation and
+system library management. For wrfm.nvim's zero-dependency architecture,
+mise is sufficient.
+
+Running CI locally~
+
+wrfm.nvim uses act (https://github.com/nektos/act) to run GitHub Actions
+locally. This lets you test CI changes without pushing.
+>sh
+    mise run test-ci          # full CI
+    mise run test-ci-stable   # stable Neovim only
+    mise run test-ci-nightly  # nightly Neovim only
+<The test-ci* tasks use /tmp/wrfm.nvim-act* for caching.
+
+Test structure~
+
+Tests are hermetic: golden fixtures are committed, so the oracle comparison
+never needs the CLI at runtime. Set WRFM_SKIP_ORACLE=1 to skip it anyway.
+>sh
+    tests/
+    ├── fixtures/          # test data (golden files, models)
+    ├── helpers/           # test utilities
+    ├── api/               # API tests
+    ├── e2e/               # end-to-end tests
+    ├── inline/            # inline preview tests
+    ├── oracle/            # golden file comparison tests
+    ├── parser/            # .wrfm parser tests
+    └── renderer/          # braille renderer tests
+<
+
+Commit conventions~
+
+This project uses Conventional Commits (https://www.conventionalcommits.org/):
+>sh
+    <type>(<scope>): <description>
+
+    [optional body]
+    [optional footer(s)]
+<
+
+Types: feat, fix, docs, test, chore, refactor, perf, ci
+
+Scopes (optional): parser, renderer, model, inline, api, health, report
+
+Examples:>
+    feat(renderer): add fit-distance calculation
+    fix(parser): handle packed edge lines correctly
+    docs(readme): add development setup guide
+    test(oracle): add golden fixture for anvil model
+    chore: update stylua config
+<
+
+This format enables automatic CHANGELOG generation and helps with git bisect.
+
+vim:tw=78:ts=8:ft=help:norl:

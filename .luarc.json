@@ -1,0 +1,50 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/lua-language-server/master/doc/schema.json",
+  "runtime": {
+    "version": "LuaJIT",
+    "special": {
+      "vim.regex": {},
+      "vim.loop": {},
+      "vim.treesitter.query": {}
+    },
+    "path": [
+      "lua/?.lua",
+      "lua/?/init.lua",
+      "tests/?.lua",
+      "tests/?/init.lua"
+    ]
+  },
+  "workspace": {
+    "library": [
+      "/usr/local/share/nvim/runtime/lua",
+      "/usr/share/nvim/runtime/lua"
+    ],
+    "checkThirdParty": false,
+    "ignoreDir": [
+      ".tests",
+      ".git",
+      "node_modules"
+    ]
+  },
+  "diagnostics": {
+    "globals": [
+      "vim",
+      "describe",
+      "it",
+      "before_each",
+      "after_each",
+      "pending",
+      "assert"
+    ]
+  },
+  "type": {
+    "castNumberToInteger": true
+  },
+  "format": {
+    "enable": false
+  },
+  "completion": {
+    "callSnippet": "Both",
+    "keywordSnippet": "Both"
+  }
+}

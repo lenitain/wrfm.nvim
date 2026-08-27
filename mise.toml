@@ -1,0 +1,65 @@
+[tools]
+act = "0.2.89"
+stylua = "2.5.2"
+
+[tasks.format]
+# format Lua files
+shell = "bash -eu -o pipefail -c"
+run = "stylua lua plugin tests"
+
+[tasks.format-check]
+# check Lua formatting
+shell = "bash -eu -o pipefail -c"
+run = "stylua --check lua plugin tests"
+
+[tasks.test]
+# run full test suite inside Neovim (uses tests/busted.lua)
+shell = "bash -eu -o pipefail -c"
+run = "nvim -l tests/busted.lua"
+
+[tasks.test-verbose]
+# run tests with verbose output
+shell = "bash -eu -o pipefail -c"
+run = "nvim -l tests/busted.lua -- --verbose"
+
+[tasks.test-ci]
+# run GitHub Actions CI locally with act
+shell = "bash -eu -o pipefail -c"
+run = "act --action-cache-path /tmp/wrfm.nvim-act --cache-server-path /tmp/wrfm.nvim-actcache -W .github/workflows/ci.yml"
+
+[tasks.test-ci-stable]
+# run stable Neovim CI tests with act
+shell = "bash -eu -o pipefail -c"
+run = "act --action-cache-path /tmp/wrfm.nvim-act --cache-server-path /tmp/wrfm.nvim-actcache -W .github/workflows/ci.yml -j tests --matrix neovim_version:stable"
+
+[tasks.test-ci-nightly]
+# run nightly Neovim CI tests with act
+shell = "bash -eu -o pipefail -c"
+run = "act --action-cache-path /tmp/wrfm.nvim-act --cache-server-path /tmp/wrfm.nvim-actcache -W .github/workflows/ci.yml -j tests --matrix neovim_version:nightly"
+
+[tasks.golden]
+# regenerate golden test fixtures
+shell = "bash -eu -o pipefail -c"
+run = "bash scripts/update-golden.sh"
+
+[tasks.help]
+# show available tasks
+shell = "bash -eu -o pipefail -c"
+run = """
+cat <<'EOF'
+Available tasks:
+  format              format Lua files
+  format-check        check Lua formatting
+  test                run full test suite (nvim -l tests/busted.lua)
+  test-verbose        run tests with verbose output
+  test-ci             run GitHub Actions CI locally with act
+  test-ci-stable      run stable Neovim CI tests with act
+  test-ci-nightly     run nightly Neovim CI tests with act
+  golden              regenerate golden test fixtures
+  help                show this help
+
+Tools pinned in [tools]:
+  act                 $(act --version 2>/dev/null || echo 'not installed')
+  stylua              $(stylua --version 2>/dev/null || echo 'not installed')
+  nvim                $(nvim --version 2>/dev/null | head -1 || echo 'not installed')
+EOF"""

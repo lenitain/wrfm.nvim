@@ -1,0 +1,14 @@
+# wrfm render /home/lenitain/.projects/wrfm.nvim/tests/fixtures/models/tetra.wrfm --format braille --views= --pitch=90 --yaw=0 --width=40 --height=12
+# generated-with: wrfm 0.1.0
+
+
+
+
+                ⢰⢖⠒⠒⠤⠤⣤
+                ⢸ ⠑⢄⡠⠊⢸
+                 ⡇⡠⠊⠑⢄⠈⡆
+                 ⠛⠒⠒⠢⠤⠵⠇
+
+
+
+
