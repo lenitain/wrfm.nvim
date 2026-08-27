@@ -1,6 +1,6 @@
 # wrfm.nvim
 
-Braille wireframe viewer for Neovim — render `.wrfm` 3D models as Unicode braille art.
+Braille wireframe viewer for Neovim — render [`.wrfm`](https://github.com/Vaishnav-Sabari-Girish/wireforge/tree/main/crates/wrfm) 3D models as Unicode braille art.
 
 ![wrfm demo](assets/wrfm-loop.webp)
 
@@ -60,6 +60,7 @@ runtimepath, then run `:helptags ALL`.
 </details>
 
 `setup()` is optional; every option has a default.
+
 ## Configuration
 
 ### Default configuration
