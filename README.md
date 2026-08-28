@@ -83,6 +83,10 @@ require("wrfm").setup({
   -- Hot reload
   default_watch = true,       -- auto-update when .wrfm file changes
 
+  -- Appearance
+  highlight = "Yellow",       -- wireframe color: hex "#RRGGBB" or a theme
+                              -- highlight group to link (e.g. "Function")
+
   -- Inline preview
   integrations = {
     wrfm = {
@@ -102,6 +106,33 @@ and absolute caps clamp derived _and_ explicit sizes; per-model overrides
 `from_file()`.
 
 ## How to ...?
+
+<details>
+<summary>Change the wireframe color</summary>
+
+Set `highlight` in `setup()` to either a hex color or a theme group:
+
+```lua
+require("wrfm").setup({ highlight = "#ff8800" })   -- fixed orange
+require("wrfm").setup({ highlight = "Function" })  -- follow the colorscheme
+```
+
+- A hex value (`#RRGGBB`) paints the art in exactly that color and always
+  wins, even across colorscheme switches.
+- A group name links the wireframes to that theme group, so the color follows
+  your colorscheme and updates when you switch themes. Like the default
+  (`"Yellow"`), an unset link is a fallback: a colorscheme that defines
+  `WrfmPreview` itself still takes precedence.
+- Malformed values (e.g. `"#12"`) raise on `setup()`, like unknown keys.
+
+Every live view recolors instantly — highlight groups resolve by name at draw
+time, so no re-render is needed. To change the color at runtime:
+
+```lua
+require("wrfm").set_highlight("#00ff88")
+```
+
+</details>
 
 <details>
 <summary>Enable / disable / get plugin status</summary>

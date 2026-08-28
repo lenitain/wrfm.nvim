@@ -16,6 +16,7 @@ local Model = require("wrfm.model")
 ---@field default_auto_spin boolean spin by default after render()
 ---@field default_spin_speed number radians per frame
 ---@field default_watch boolean hot-reload source files by default
+---@field highlight string wireframe color: hex "#RRGGBB" or a theme highlight group to link (default "Yellow")
 ---@field pause_spin_when_unfocused boolean pause auto-spin while the model's
 --   host window is not focused (default true)
 ---@field fps number animation frame rate
@@ -44,6 +45,7 @@ local KNOWN_KEYS = {
   default_auto_spin = true,
   default_spin_speed = true,
   default_watch = true,
+  highlight = true,
   pause_spin_when_unfocused = true,
   fps = true,
   integrations = true,
@@ -73,6 +75,10 @@ M.config = {
   default_auto_spin = true,
   default_spin_speed = 0.02,
   default_watch = true,
+  -- Wireframe color: a hex value ("#RRGGBB") paints the art directly; any
+  -- other string links WrfmPreview to that theme highlight group, so the
+  -- color follows the active colorscheme.
+  highlight = "Yellow",
   -- A spinning model repaints its buffer every frame; when the window it
   -- decorates loses focus (a fullscreen Yazi/terminal float over the
   -- dashboard, a split taken over by an editor), that repaint is invisible
@@ -89,6 +95,12 @@ M.config = {
     },
   },
 }
+
+-- True once the user explicitly set `highlight` (via setup() or
+-- set_highlight()). Explicit values force the WrfmPreview definition so the
+-- requested color always wins; unset values keep the theme-friendly
+-- `default = true` fallback (a colorscheme defining WrfmPreview itself wins).
+local highlight_explicit = false
 
 -- Sentinel augroups live above setup(): its integrations branch invalidates
 -- them so the next _ensure_integration_hooks() re-registers with new patterns.
@@ -111,6 +123,12 @@ function M.setup(options)
     if not KNOWN_KEYS[key] then
       error(("wrfm.setup: unknown option '%s'"):format(key), 0)
     end
+  end
+  -- Validate an explicit highlight before touching any config: a bad value
+  -- must raise without leaving the module half-configured (subsequent
+  -- setup() calls would otherwise re-raise on the stale value).
+  if options.highlight ~= nil then
+    require("wrfm.highlight").resolve(options.highlight)
   end
   for key, value in pairs(options) do
     if key == "integrations" and type(value) == "table" then
@@ -136,6 +154,33 @@ function M.setup(options)
       M.config[key] = value
     end
   end
+  if options.highlight ~= nil then
+    highlight_explicit = true
+  end
+  -- Recolor from the merged config; raises on an invalid highlight value.
+  M._apply_highlight()
+end
+
+---Apply the configured wireframe color to the WrfmPreview highlight group.
+---Every render path references that group by name, so live views recolor in
+---place without a re-render. Called from plugin load, setup(), set_highlight()
+---and the ColorScheme autocmd (plugin/wrfm.lua). An explicitly configured
+---value forces the definition; the unset default stays a theme-friendly link.
+---@private
+function M._apply_highlight()
+  require("wrfm.highlight").apply(M.config.highlight, { force = highlight_explicit })
+end
+
+---Set the wireframe color at runtime: a hex string ("#RRGGBB") paints the
+---art directly; any other string links WrfmPreview to that theme highlight
+---group. Applies immediately to every live model and sticks across
+---colorscheme changes.
+---@param value string hex color ("#RRGGBB") or a theme highlight group name
+function M.set_highlight(value)
+  require("wrfm.highlight").resolve(value) -- raise before mutating config
+  M.config.highlight = value
+  highlight_explicit = true
+  M._apply_highlight()
 end
 
 -- ---------------------------------------------------------------------------

@@ -3,8 +3,13 @@ if vim.g.loaded_wrfm then
 end
 vim.g.loaded_wrfm = true
 
+-- Wireframe color is a config concern: re-apply the configured `highlight`
+-- (hex color or theme-group link) from the current wrfm.config, not a fixed
+-- Yellow. At plugin load setup() has not run yet, so this applies the default;
+-- setup() and set_highlight() re-apply, and this hook re-applies it whenever
+-- the colorscheme changes (theme links must track the active palette).
 local function set_preview_hl()
-  vim.api.nvim_set_hl(0, "WrfmPreview", { link = "Yellow", default = true })
+  require("wrfm")._apply_highlight()
 end
 set_preview_hl()
 vim.api.nvim_create_autocmd("ColorScheme", { callback = set_preview_hl })

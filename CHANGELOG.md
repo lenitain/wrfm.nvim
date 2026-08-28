@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Appearance
+
+- New option `highlight` controls the wireframe color, set either as a hex
+  value (`"#RRGGBB"`, e.g. `highlight = "#ff8800"`) or as a theme highlight
+  group to link `WrfmPreview` to (e.g. `highlight = "Function"`, default
+  `"Yellow"`). Hex values always win; group links follow the active
+  colorscheme and re-apply on `ColorScheme`. Live views recolor instantly
+  (the group resolves by name at draw time, no re-render). A runtime setter
+  `wrfm.set_highlight("#00ff88")` is included. Malformed values raise on
+  `setup()` like unknown keys, without leaving the config half-updated.
+- Why: the wireframe color was hard-coded to a `Yellow` link. Users needed
+  both a fixed color for brand/logo art and a theme-aware option for
+  dashboard art that follows their colorscheme — the two `highlight` forms
+  map onto `fg` vs `link` in `nvim_set_hl()`.
+
 ### Changed
 
 #### Animation and controls

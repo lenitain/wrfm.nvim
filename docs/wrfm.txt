@@ -55,6 +55,10 @@ SETUP                                                           *wrfm.setup*
       -- Hot reload
       default_watch = true,       -- hot-reload .wrfm files by default
 
+      -- Appearance
+      highlight = "Yellow",       -- wireframe color: hex "#RRGGBB" or a
+                                  -- theme highlight group to link
+
       -- Inline preview
       integrations = {
         wrfm = {
@@ -69,6 +73,23 @@ SETUP                                                           *wrfm.setup*
 <
 
 `setup()` is optional. Unknown keys raise an error.
+
+COLOR                                                                *wrfm.color*
+
+The wireframe color is set with the `highlight` option, one of two forms:
+
+- A hex value (`"#RRGGBB"`) paints the art in exactly that color and always
+  wins, even across colorscheme switches.
+- Any other string names a highlight group to link `WrfmPreview` to, so the
+  color follows the active colorscheme (and updates on `:colorscheme`).
+  The default is `"Yellow"`. Like an unset link, the link is applied with
+  `default = true`: a colorscheme that defines `WrfmPreview` itself still
+  takes precedence.
+
+Malformed values (e.g. `"#12"`) raise on |wrfm.setup()| like unknown keys.
+All live views recolor instantly, because highlights resolve by name at draw
+time; no re-render is needed. Change the color at runtime with
+`require("wrfm").set_highlight("#00ff88")`.
 
 The size caps clamp derived AND explicit sizes: a canvas never exceeds
 `max_width_window_percentage%` of its host window (`max_height_window_
@@ -258,6 +279,13 @@ COMMANDS                                                    *wrfm.commands*
 HOW TO                                                          *wrfm.howto*
 
 Common tasks and how to accomplish them.
+
+Change the wireframe color~
+>lua
+    require("wrfm").setup({ highlight = "#ff8800" })   -- fixed orange
+    require("wrfm").setup({ highlight = "Function" })  -- follow colorscheme
+    require("wrfm").set_highlight("#00ff88")           -- change at runtime
+<
 
 Enable / disable / get status~
 >lua
