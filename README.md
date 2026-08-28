@@ -10,6 +10,10 @@ We provide:
 - Floating window and inline preview modes
 - Live hot-reload and auto-spin animation
 
+For **creating** and **editing** `.wrfm` models — the flip side of viewing
+— see [wrfm-skill](https://github.com/lenitain/wrfm-skill), an agent skill
+that teaches coding agents to build, fix, and review wireframes image-first.
+
 ## Requirements
 
 - **Neovim** >= 0.11 (uses modern APIs)
@@ -404,7 +408,8 @@ Rendering is a few hundred microseconds per frame for typical models.
 **What [.wrfm](https://github.com/Vaishnav-Sabari-Girish/wireforge/tree/main/crates/wrfm) files can I view?**
 Any valid [`.wrfm`](https://github.com/Vaishnav-Sabari-Girish/wireforge/tree/main/crates/wrfm) file. The format supports vertices, edges, and
 optional group sections. See the [wireforge](https://github.com/Vaishnav-Sabari-Girish/wireforge) project for format
-details and model generators.
+details and model generators — or let the companion
+[wrfm-skill](https://github.com/lenitain/wrfm-skill) generate one for you.
 
 ## Development
 
