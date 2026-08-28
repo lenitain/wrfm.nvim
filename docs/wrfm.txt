@@ -10,6 +10,10 @@ wrfm.nvim renders `.wrfm` 3D wireframe models inside Neovim using Unicode
 braille characters in a floating window. It needs nothing but Neovim >= |0.11|
 and works over ssh/tmux where image protocols do not.
 
+The `.wrfm` format is the wireforge project's text format.  The project
+and format docs live at:
+https://github.com/Vaishnav-Sabari-Girish/wireforge
+
 Features~
 - Zero dependencies: only Neovim >= 0.11 required
 - Braille rendering: Unicode braille characters (U+2800-U+28FF)
@@ -178,10 +182,13 @@ A WrfmModel exposes:
     model:clear()         destroy the view, stop timers/watchers, unregister.
     model:set_spin(bool)  toggle animation (nil inverts current state).
                           Spinning is a relative rotation around the model's
-                          own Y axis (wireforge's Space auto-spin), not a
-                          world-frame turntable.
+                          own Y axis (wireforge's Space auto-spin; see
+                          https://github.com/Vaishnav-Sabari-Girish/wireforge),
+                          not a world-frame turntable.
     model:set_pitch(deg)  tilt to {deg} degrees via a world-frame delta
-                          (wireforge arrow-key semantics) and repaint.
+                          (wireforge arrow-key semantics, see
+                          https://github.com/Vaishnav-Sabari-Girish/wireforge)
+                          and repaint.
     model:set_distance(d) pin camera distance (nil = auto-fit) and repaint.
 
 The live orientation is kept as a rotation matrix, so spin accumulates
@@ -476,7 +483,8 @@ FAQ                                                            *wrfm.faq*
 Why braille?           Plain text renders anywhere Neovim runs - ssh, tmux,
                        screen - without image protocol support.
 vs. wireforge TUI?     Edit in the TUI; preview beside your editor here.
-                       Hot reload bridges the two.
+                       Hot reload bridges the two.  Project:
+                       https://github.com/Vaishnav-Sabari-Girish/wireforge
 Performance?           A typical frame rasterizes in well under a millisecond;
                        animation runs on a libuv timer at `fps`.
 Over ssh/tmux?         Yes - braille characters are plain Unicode text. No
@@ -485,7 +493,8 @@ Terminal compatibility?Works with virtually all modern terminals: iTerm2,
                        Alacritty, Kitty, WezTerm, Ghostty, foot, Windows
                        Terminal, GNOME Terminal, Konsole, and more.
 What .wrfm files?      Any valid .wrfm file. See the wireforge project for
-                       format details and model generators.
+                       format details and model generators:
+                       https://github.com/Vaishnav-Sabari-Girish/wireforge
 
 ==============================================================================
 DEVELOPMENT                                                *wrfm.development*
