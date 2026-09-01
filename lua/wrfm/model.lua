@@ -8,6 +8,11 @@ local uv = vim.uv or vim.loop
 ---@class WrfmVec3 : number[] # { x, y, z }
 ---@class WrfmEdge : number[] # { i, j } zero-based vertex indices
 
+---Whether a model may paint outside its canvas (`overflow`).
+---@alias WrfmOverflow "clip"|"visible"
+---Who wins where a bleeding model and other cell occupants collide (`z_order`).
+---@alias WrfmZOrder "model"|"text"
+
 ---@class WrfmModelOptions
 ---@field window? integer anchor float to this window instead of the editor grid
 ---@field buffer? integer paint into this buffer instead of a floating window
@@ -20,6 +25,7 @@ local uv = vim.uv or vim.loop
 ---@field ignore_max_size? boolean lift percentage/absolute size caps for this model
 ---@field namespace? string registry tag for grouping/filtering
 ---@field distance? number camera distance (nil = auto fit)
+---@field fov? number field of view in degrees (default from `default_fov`): how wide the camera looks, independent of how far it sits
 ---@field pitch? number initial pitch in degrees
 ---@field yaw? number initial yaw in degrees
 ---@field auto_spin? boolean start spinning right after render()
@@ -28,8 +34,8 @@ local uv = vim.uv or vim.loop
 --   window is not focused (default: pause_spin_when_unfocused config)
 ---@field watch? boolean hot-reload the source file (default: default_watch)
 ---@field border? boolean float border and title (default true; false = seamless)
----@field virt_lines_above? boolean inline preview above (true, default) or below the anchor line
----@field overflow? "visible"|"clip" inline: visible bleeds into surrounding text, clip truncates at canvas edge (default "clip")
+---@field overflow? WrfmOverflow inline: "visible" bleeds into surrounding text, "clip" truncates at canvas edge (default from `default_overflow`)
+---@field z_order? WrfmZOrder how this model composites where it overlaps other cells (default from `default_z_order`)
 ---@field id? WrfmId stable registry identity (default "model-N")
 
 ---@class WrfmModelRestoreSnapshot
@@ -53,7 +59,8 @@ local uv = vim.uv or vim.loop
 ---@field yaw number radians (display accumulator; `rot` is authoritative)
 ---@field rot number[][] model->world orientation, 3x3 row-major (wireforge ViewState parity)
 ---@field dist_opt? number user-pinned camera distance
----@field fit_dist number auto-fit camera distance for current geometry
+---@field fov number field of view in degrees (FOV frames the viewport, dist frames the model)
+---@field fit_dist number auto-fit camera distance for the current geometry and view
 ---@field auto_spin boolean
 ---@field spin_speed number
 ---@field pause_spin_when_unfocused boolean spin pauses while the host window
@@ -78,18 +85,23 @@ local uv = vim.uv or vim.loop
 ---@field last_text? string source text of the last successful parse (dual-channel dedup key)
 ---@field last_stat? { mtime: uv.uv_timeval64?, size?: integer } mtime/size dedup key
 ---@field reload_warned? boolean suppress duplicate reload warnings until recovery
----@field inline? boolean true = attached as inline preview (extmark virt_lines)
+---@field inline? boolean true = attached as inline preview (virt_text overlay)
 ---@field inline_bufnr? integer target buffer for inline (may differ from host buf)
 ---@field inline_ns integer extmark namespace (shared, set once by init)
----@field inline_extmark_id? integer fixed extmark id for deterministic updates
+---@field inline_extmark_ids? integer[] overlay extmark ids of the current frame
 ---@field only_render_at_cursor? boolean show preview only near cursor
 ---@field cursor_mode? "inline"|"popup" cursor-only rendering mode
 ---@field popup_winid? integer temporary cursor-popup window handle
----@field virt_lines_above boolean inline extmark above the anchor line (default true)
----@field overflow "visible"|"clip" inline overflow behavior
+---@field overlay_row? integer buffer line the canvas top-left cell mapped to last frame
+---@field overlay_col? integer buffer column the canvas top-left cell mapped to last frame
+---@field overflow WrfmOverflow inline overflow behavior (floats are always clipped)
+---@field z_order WrfmZOrder overlap compositing intent (always consumed inline)
 ---@field namespace? string registry tag (assigned by wrfm.from_file)
 ---@field _moved? boolean user repositioned the float via move()
 ---@field _paint_pending? boolean a scheduled repaint is queued
+---@field _overlay_warned? boolean an overlay degradation notice was already emitted
+---@field _fit_geom? WrfmVec3[] geometry the cached extent was measured on
+---@field _extent? number cached bounding-box extent (world units) of _fit_geom
 local Model = {}
 Model.__index = Model
 
@@ -101,6 +113,64 @@ local function opt(value, fallback)
     return value
   end
   return fallback
+end
+
+-- Values that select a rendering path, so a typo must not silently draw
+-- something else. Compositing is always whole-cell: `model` paints over
+-- the colliding cell, `text` skips it.
+Model.OVERFLOWS = { clip = true, visible = true }
+Model.Z_ORDERS = { model = true, text = true }
+
+---Field of view bounds in degrees: focal = (viewport/2)/tan(fov/2) diverges at
+---90 degrees and the framing degenerates near 0 or 180.
+Model.FOV_MIN = 0.1
+Model.FOV_MAX = 179.9
+
+---Reject anything outside a numeric range (same boundary discipline as
+---`check_enum`: a bad projection parameter raises where it is written down).
+---@param value any
+---@param name string option name quoted back in the error
+---@param low number
+---@param high number
+---@return number value the validated value
+---@throws when `value` is not a number inside `low`..`high`
+function Model.check_range(value, name, low, high)
+  -- `not (>= and <=)` instead of `< or >`: NaN compares false against
+  -- everything, so a disjunction would wave it through into the projection.
+  if type(value) ~= "number" or not (value >= low and value <= high) then
+    return error(
+      ("wrfm: %s must be a number from %s to %s, got %s"):format(
+        name,
+        tostring(low),
+        tostring(high),
+        vim.inspect(value)
+      ),
+      0
+    )
+  end
+  return value
+end
+
+---Reject anything outside a fixed option set. Both `overflow` and `z_order`
+---resolve from a per-model value over a global default, so each layer of the
+---config is checked wherever it is written down.
+---@param value any
+---@param name string option name quoted back in the error
+---@param allowed table<string, boolean>
+---@return string value the validated value
+---@throws when `value` is not one of `allowed`
+function Model.check_enum(value, name, allowed)
+  if allowed[value] then
+    return value
+  end
+  local names = {}
+  for option in pairs(allowed) do
+    names[#names + 1] = '"' .. option .. '"'
+  end
+  table.sort(names)
+  local last = table.remove(names)
+  local legal = #names == 0 and last or (table.concat(names, ", ") .. " or " .. last)
+  return error(("wrfm: %s must be %s, got %s"):format(name, legal, vim.inspect(value)), 0)
 end
 
 ---@param value number
@@ -145,9 +215,7 @@ function Model:_resolve_size()
     return
   end
   local cfg = config()
-  local base = valid_anchor(self.anchor_win)
-    or valid_anchor(self.host_win)
-    or vim.api.nvim_get_current_win()
+  local base = self:_base_window()
   local win_width, win_height = window_util.dimensions(base)
   local columns, lines = term.size()
   local max_w = math.max(columns - 2, 1)
@@ -192,6 +260,85 @@ function Model:_alive()
     return api.nvim_win_is_valid(self.winid) and api.nvim_win_get_buf(self.winid) == self.bufnr
   end
   return true
+end
+
+---The window this model lays itself out against: its anchor, the window focused
+---at construction, or whatever is current once that window is gone.
+---@private
+---@return integer
+function Model:_base_window()
+  return valid_anchor(self.anchor_win)
+    or valid_anchor(self.host_win)
+    or vim.api.nvim_get_current_win()
+end
+
+---Dot height of the viewport whose FOV frames this model's render, or nil when
+---the canvas is itself the viewport. Floats and cursor popups are the CLI
+---semantics (the printed canvas *is* the screen, so framing follows the box).
+---An in-buffer preview follows image.nvim's model: an object's physical size is
+---set by its own camera, and the window only decides what is visible -- so the
+---FOV subtends the editor screen, not the window. Resizing a split then reveals
+---or crops the art instead of rescaling it, which also keeps the overlap
+---geometry of `overflow = "visible"` stable across layout changes.
+---@private
+---@return integer?
+function Model:_ref_height()
+  if not self.inline or self:_uses_popup() then
+    return nil
+  end
+  return term.text_lines() * 4
+end
+
+---The view this model renders right now: orientation, pinned-or-fitted camera
+---distance, the resolved canvas and the viewport it is cropped from. Every
+---render path reads it through here so a footprint query measures exactly what
+---the next frame will draw.
+---@private
+---@return WrfmView
+function Model:_view()
+  self:_resolve_size()
+  local px_h = self.height * 4
+  local ref_h = self:_ref_height() or px_h
+  -- Auto-fit belongs to the view, not to the geometry alone: it re-frames when
+  -- the viewport, the canvas or the FOV changes. Only the bounding box costs
+  -- anything, and it is invalidated by identity when a reload swaps vertices.
+  if self._fit_geom ~= self.vertices then
+    self._fit_geom = self.vertices
+    self._extent = renderer.model_extent(self.vertices)
+  end
+  self.fit_dist = renderer.frame_distance(self._extent, ref_h, px_h, self.fov)
+  return {
+    rot = self.rot,
+    dist = opt(self.dist_opt, self.fit_dist),
+    width = self.width,
+    height = self.height,
+    ref_height = ref_h,
+    fov_deg = self.fov,
+  }
+end
+
+---The model's true display range for the current view, in absolute cells: what
+---the rasterizer would paint on an unlimited grid. `overflow = "clip"` throws
+---away whatever lands outside the canvas, so these numbers say how much.
+---@return boolean occupied false = nothing reaches the screen
+---@return integer min_col
+---@return integer max_col
+---@return integer min_row
+---@return integer max_row
+function Model:footprint()
+  return renderer.footprint(self, self:_view())
+end
+
+---Whether the projected footprint reaches past the canvas. This is the design's
+---`画布 < 显示范围` branch: `clip` truncates here, `visible` would overlap
+---neighbouring cells and need `z_order` compositing.
+---@return boolean
+function Model:overflows()
+  local any, min_col, max_col, min_row, max_row = self:footprint()
+  if not any then
+    return false
+  end
+  return min_col < 0 or max_col > self.width - 1 or min_row < 0 or max_row > self.height - 1
 end
 
 ---Whether the window the user is looking at is the one this model decorates.
@@ -275,12 +422,7 @@ function Model:_paint()
   if not self:_alive() then
     return
   end
-  local lines = renderer.render_frame(self, {
-    rot = self.rot,
-    dist = opt(self.dist_opt, self.fit_dist),
-    width = self.width,
-    height = self.height,
-  })
+  local lines = renderer.render_frame(self, self:_view())
   local api = vim.api
   local buf_opts = { buf = self.bufnr }
   local was_modifiable = api.nvim_get_option_value("modifiable", buf_opts)
@@ -295,10 +437,19 @@ end
 
 ---Repaint one frame through the view mode's own channel so incremental
 ---updates never touch buffers the model does not own.
+---Whether this model paints through the cursor popup window instead of the
+---in-buffer extmark. A popup is a float of its own, so only a real in-buffer
+---preview is a crop of the window it decorates.
+---@private
+---@return boolean
+function Model:_uses_popup()
+  return self.only_render_at_cursor and self.cursor_mode == "popup"
+end
+
 ---@private
 function Model:_repaint()
   if self.inline then
-    if self.only_render_at_cursor and self.cursor_mode == "popup" then
+    if self:_uses_popup() then
       self:_repaint_popup()
     else
       self:_render_inline()
@@ -392,6 +543,12 @@ function Model.from_file(path, options)
     yaw = yaw,
     rot = renderer.rotation(pitch, yaw),
     dist_opt = opt(options.distance, cfg.default_distance),
+    fov = Model.check_range(
+      opt(options.fov, opt(cfg.default_fov, renderer.FOV_DEG)),
+      "fov",
+      Model.FOV_MIN,
+      Model.FOV_MAX
+    ),
     fit_dist = renderer.fit_distance(data.vertices),
     auto_spin = opt(options.auto_spin, cfg.default_auto_spin),
     spin_speed = opt(options.spin_speed, cfg.default_spin_speed),
@@ -401,8 +558,16 @@ function Model.from_file(path, options)
     ),
     watch = opt(options.watch, cfg.default_watch),
     border = opt(options.border, true),
-    virt_lines_above = options.virt_lines_above ~= false,
-    overflow = options.overflow or cfg.default_overflow or "clip",
+    overflow = Model.check_enum(
+      opt(options.overflow, opt(cfg.default_overflow, "clip")),
+      "overflow",
+      Model.OVERFLOWS
+    ),
+    z_order = Model.check_enum(
+      opt(options.z_order, opt(cfg.default_z_order, "model")),
+      "z_order",
+      Model.Z_ORDERS
+    ),
     anchor_win = options.window,
     anchor_buf = options.window
         and vim.api.nvim_win_is_valid(options.window)
@@ -511,7 +676,7 @@ function Model:render(geometry)
     self:_apply_geometry(geometry)
   end
   if self.inline then
-    if self.only_render_at_cursor and self.cursor_mode == "popup" then
+    if self:_uses_popup() then
       self:_render_popup()
     else
       self:_render_inline()
@@ -628,7 +793,11 @@ end
 -- models just repaint at the new canvas size.
 ---@private
 function Model:_relayout()
-  if self.width_opt ~= nil and self.height_opt ~= nil then
+  -- A fixed canvas over a canvas-framed viewport (floats, bound buffers, popups)
+  -- genuinely has nothing to redo. An in-buffer preview does: its projection is
+  -- framed on the editor screen, so a screen resize changes the art even when
+  -- the canvas was handed to us explicitly.
+  if self.width_opt ~= nil and self.height_opt ~= nil and self:_ref_height() == nil then
     return
   end
   if not self:_alive() then
@@ -705,6 +874,18 @@ end
 ---@param distance number?
 function Model:set_distance(distance)
   self.dist_opt = distance
+  if self:_alive() then
+    self:_repaint()
+  end
+end
+
+---Set the field of view in degrees and repaint. FOV decides how much of the
+---world the viewport shows; `set_distance` decides how far away the model sits
+---and therefore how strong the perspective is. Together they size the art
+---without dragging the projection along.
+---@param degrees number
+function Model:set_fov(degrees)
+  self.fov = Model.check_range(degrees, "fov", Model.FOV_MIN, Model.FOV_MAX)
   if self:_alive() then
     self:_repaint()
   end

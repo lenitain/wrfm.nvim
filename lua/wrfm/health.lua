@@ -107,13 +107,20 @@ function M.check()
   -- 5. Current configuration summary.
   local config = require("wrfm").config
   health.info(
-    ("config: fps=%s default_pitch=%s default_auto_spin=%s default_spin_speed=%s default_watch=%s highlight=%s"):format(
+    ("config: fps=%s default_pitch=%s default_fov=%s default_auto_spin=%s default_spin_speed=%s default_watch=%s highlight=%s"):format(
       tostring(config.fps),
       tostring(config.default_pitch),
+      tostring(config.default_fov),
       tostring(config.default_auto_spin),
       tostring(config.default_spin_speed),
       tostring(config.default_watch),
       tostring(config.highlight)
+    )
+  )
+  health.info(
+    ("config: default_overflow=%s default_z_order=%s"):format(
+      tostring(config.default_overflow),
+      tostring(config.default_z_order)
     )
   )
   health.info(

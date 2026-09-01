@@ -46,6 +46,11 @@ SETUP                                                           *wrfm.setup*
       -- Camera
       default_pitch = 30,         -- initial pitch (degrees)
       default_distance = nil,     -- camera distance; nil = auto-fit
+      default_fov = 60,           -- vertical field of view (degrees)
+
+      -- Overlap compositing (inline)
+      default_overflow = "clip",  -- "clip" or "visible"
+      default_z_order = "model",  -- "model" or "text"
 
       -- Animation
       default_auto_spin = true,   -- spin after render()
@@ -163,6 +168,9 @@ call are ignored (so repeating a call never stacks viewers). Raises when
     ignore_max_size  lift percentage and absolute size caps for this model
                 (terminal bounds still apply)
     distance    pin the camera distance (nil auto-fits)
+    fov         vertical field of view in degrees (default: default_fov);
+                independent of `distance` - fov sets how much of the world
+                the viewport shows, distance sets how far the model sits
     pitch/yaw   initial angles in degrees
     auto_spin   start spinning right after render()
     spin_speed  radians per frame
@@ -173,8 +181,14 @@ call are ignored (so repeating a call never stacks viewers). Raises when
     border      float border and title (default true); false renders a
                 seamless frameless overlay - only the braille art shows,
                 background merged into the host window (image.nvim look)
-    virt_lines_above  inline preview above the anchor line (true, default)
-                or below it; ignored outside inline mode
+    overflow    inline overflow behavior (default: default_overflow):
+                "clip" truncates the artwork at the canvas edge; "visible"
+                bleeds it into the surrounding text, skipping cells that
+                have nowhere to land. Floats are always clipped by their
+                own window.
+    z_order     how an inline preview composites where it overlaps other
+                cells (default: default_z_order): "model" paints over the
+                cell, "text" yields it to the buffer's content.
     namespace   registry tag for get_models() filtering
     id          stable registry identity
 
@@ -211,6 +225,25 @@ A WrfmModel exposes:
                           https://github.com/Vaishnav-Sabari-Girish/wireforge)
                           and repaint.
     model:set_distance(d) pin camera distance (nil = auto-fit) and repaint.
+    model:set_fov(deg)    set the vertical field of view in degrees and
+                          repaint. FOV and distance are independent knobs:
+                          widening the FOV shows more of the world (bigger
+                          art) without moving the camera, which is what
+                          `distance` does.
+
+    model:footprint()     the model's true display range for the current
+                          view, in absolute cells: `occupied, min_col,
+                          max_col, min_row, max_row`. Whatever lands
+                          outside the canvas is what `overflow = "clip"`
+                          throws away.
+    model:overflows()     boolean: whether the footprint reaches past the
+                          canvas. This is the condition `overflow =
+                          "visible"` keys off to decide whether to bleed.
+
+    model:footprint()/`overflows()` are the diagnostic pair behind
+    truncation: the footprint is fixed by FOV + viewport + distance, and
+    the canvas is only a crop box. To stop an inline preview clipping,
+    widen the canvas, raise `distance`, or widen the FOV.
 
 The live orientation is kept as a rotation matrix, so spin accumulates
 relative to the current pose; `pitch`/`yaw` only mirror the display angles.
@@ -410,8 +443,10 @@ known before derived canvas sizes clamp against them.
 INLINE PREVIEW                                              *wrfm.inline*
 
 The inline preview renders the wireframe as braille text inside the buffer
-using extmark virtual lines.  The text scrolls with the buffer naturally;
-no graphics protocol or special terminal is needed.
+using virt_text overlay extmarks: the artwork is composited on top of the
+buffer's real text cells.  The text scrolls with the buffer naturally and
+is never pushed or rearranged (there is no virtual-lines push channel); no
+graphics protocol or special terminal is needed.
 
 Use `:WrfmHere` to toggle the preview, or configure auto-attach:
 
@@ -436,8 +471,21 @@ preview follows the cursor: popup mode reopens at each new cursor position
 and inline mode re-anchors the extmark, instead of closing on the first
 movement.
 
-Pass `virt_lines_above = false` (per model) to render an inline preview
-below its anchor line rather than above it.
+An inline preview overlays the same cells the buffer paints, so it can
+collide with text and other content. Two options govern that compositing
+(see |wrfm.from_file()|):
+
+- `overflow`: `"clip"` (default) crops the artwork to the canvas; `"visible"`
+  bleeds it into the surrounding text, skipping cells with nowhere to land
+  (left of the buffer, or past a line's end).
+- `z_order`: `"model"` (default) paints over the colliding cell; `"text"`
+  yields the cell to the buffer's content. Both are consumed on every
+  inline render.
+
+Because the overlay draws on real lines, the artwork is limited by the
+buffer's own bounds and line widths (a cell past a line's end has nowhere to
+stand). The canvas stays a crop box: `Model:overflows()` reports whether the
+footprint exceeds it and `overflow = "visible"` bleeds outward.
 
 When `clear_in_insert_mode` is true, all inline previews for the current
 buffer are hidden during insert mode and restored on |InsertLeave|.

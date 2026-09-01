@@ -10,8 +10,10 @@ local Model = require("wrfm.model")
 ---@field max_height? integer canvas rows hard cap (nil = unlimited)
 ---@field max_width_window_percentage? integer percentage width cap for auto-derived sizes (default 80)
 ---@field max_height_window_percentage? integer percentage height cap for auto-derived sizes (default 60)
----@field default_overflow "visible"|"clip" inline overflow: visible bleeds into text, clip truncates at canvas edge
+---@field default_overflow? WrfmOverflow inline default for `overflow`: "visible" bleeds into text, "clip" truncates at canvas edge
+---@field default_z_order? WrfmZOrder inline default for `z_order`: who wins where a bleeding model overlaps other cells
 ---@field default_pitch number initial pitch in degrees
+---@field default_fov? number default field of view in degrees: how wide the camera looks (independent of `default_distance`)
 ---@field default_distance? number camera distance (nil = auto fit)
 ---@field default_auto_spin boolean spin by default after render()
 ---@field default_spin_speed number radians per frame
@@ -40,7 +42,9 @@ local KNOWN_KEYS = {
   max_width_window_percentage = true,
   max_height_window_percentage = true,
   default_overflow = true,
+  default_z_order = true,
   default_pitch = true,
+  default_fov = true,
   default_distance = true,
   default_auto_spin = true,
   default_spin_speed = true,
@@ -70,7 +74,13 @@ M.config = {
   max_width_window_percentage = 80,
   max_height_window_percentage = 60,
   default_overflow = "clip",
+  default_z_order = "model",
   default_pitch = 23,
+  -- Vertical field of view in degrees. The wireforge/wrfm reference rasterizer
+  -- frames 60 degrees on its viewport, so that is the default and the value
+  -- every golden fixture was rendered with; widening it shows more of the world
+  -- (bigger art) without pulling the camera back, which is what `distance` does.
+  default_fov = 60,
   default_distance = nil,
   default_auto_spin = true,
   default_spin_speed = 0.02,
@@ -124,11 +134,21 @@ function M.setup(options)
       error(("wrfm.setup: unknown option '%s'"):format(key), 0)
     end
   end
-  -- Validate an explicit highlight before touching any config: a bad value
-  -- must raise without leaving the module half-configured (subsequent
-  -- setup() calls would otherwise re-raise on the stale value).
+  -- Validate an explicit highlight and the rendering-path enums before
+  -- touching any config: a bad value must raise without leaving the module
+  -- half-configured (subsequent setup() calls would otherwise re-raise on the
+  -- stale value) and must not wait for the first model to render.
   if options.highlight ~= nil then
     require("wrfm.highlight").resolve(options.highlight)
+  end
+  if options.default_overflow ~= nil then
+    Model.check_enum(options.default_overflow, "default_overflow", Model.OVERFLOWS)
+  end
+  if options.default_z_order ~= nil then
+    Model.check_enum(options.default_z_order, "default_z_order", Model.Z_ORDERS)
+  end
+  if options.default_fov ~= nil then
+    Model.check_range(options.default_fov, "default_fov", Model.FOV_MIN, Model.FOV_MAX)
   end
   for key, value in pairs(options) do
     if key == "integrations" and type(value) == "table" then

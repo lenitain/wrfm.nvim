@@ -173,7 +173,9 @@ local model = require("wrfm").from_file("anvil.wrfm", {
   spin_speed = 0.02,
   watch = true,            -- hot-reload this file
   border = true,           -- false = frameless seamless overlay (image.nvim look)
-  virt_lines_above = true, -- inline preview anchor placement
+  fov = 60,                -- field of view (independent of distance)
+  overflow = "clip",       -- inline: "clip" or "visible"
+  z_order = "model",       -- inline compositing: "model" or "text"
   namespace = "panel",     -- registry tag for get_models() filtering
   id = "anvil-preview",    -- stable registry identity
 })
@@ -336,15 +338,26 @@ namespace, canvas size, camera, spin/watch state), and resource counts
 ## Inline preview
 
 The inline preview renders the wireframe as braille text inside the buffer
-itself using extmark virtual lines — the text scrolls with the buffer.
+itself using a virt_text overlay extmark — the artwork is composited on top
+of the buffer's real text cells, so the source text scrolls with the buffer
+and is never pushed apart.
 
 When `only_render_at_cursor` is true, the preview appears near the cursor
 line only. `cursor_mode = "popup"` shows a temporary floating window;
-`"inline"` anchors the extmark to the cursor line — and in cursor-only mode
+`"inline"` anchors the overlay to the cursor line — and in cursor-only mode
 the preview follows the cursor as it moves, in both modes.
 
-Pass `virt_lines_above = false` to render an inline preview below its anchor
-line instead of above it.
+Because the overlay shares cells with the buffer, two options control how it
+composites with whatever is already there:
+
+- `overflow` — `"clip"` (default) crops the artwork to the canvas;
+  `"visible"` bleeds it into the surrounding text, dropping cells with no
+  buffer line/column to land on.
+- `z_order` — `"model"` (default) paints over a colliding cell;
+  `"text"` yields the cell to the buffer's content.
+
+Both are two-level (a `default_*` setup default, overridable per model via
+`from_file()` / `attach()`).
 
 ## Hot reload
 

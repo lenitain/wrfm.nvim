@@ -1,5 +1,4 @@
 local parser = require("wrfm.parser")
-local renderer = require("wrfm.renderer")
 
 local uv = vim.uv or vim.loop
 
@@ -194,10 +193,10 @@ function M.mixin(Model)
       )
       return
     end
-    -- Swap geometry atomically; view state is preserved across reloads.
+    -- Swap geometry atomically; view state is preserved across reloads. The new
+    -- vertices table alone invalidates the cached fit distance in Model:_view().
     self.vertices = data.vertices
     self.edges = data.edges
-    self.fit_dist = renderer.fit_distance(data.vertices)
     self.last_text = key
     self.reload_warned = false
     self:_schedule_paint()
@@ -255,10 +254,10 @@ function M.mixin(Model)
       return
     end
     -- Swap geometry atomically; every view state (pitch/yaw/dist/spin/id/
-    -- bindings) is deliberately preserved across reloads.
+    -- bindings) is deliberately preserved across reloads. The new vertices table
+    -- invalidates the cached fit distance in Model:_view() by identity.
     self.vertices = data.vertices
     self.edges = data.edges
-    self.fit_dist = renderer.fit_distance(data.vertices)
     self.last_text = key
     self.last_stat = { mtime = stat.mtime, size = stat.size }
     self.reload_warned = false

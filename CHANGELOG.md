@@ -9,41 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Overlap compositing
+
+- New option `overflow` controls whether an inline preview may paint outside
+  its canvas: `"clip"` (default) crops to the canvas edge; `"visible"` bleeds
+  into the surrounding text, skipping cells that have no buffer line/column
+  to land on.
+- New option `z_order` governs how an inline preview composites where it
+  overlaps other cells: `"model"` (default) paints over the colliding cell;
+  `"text"` yields the cell to the buffer's content (honoring tab expansion
+  and CJK double-width).
+- New option `fov` (field of view, default 60) plus `Model:set_fov()`: an
+  independent knob from `distance`. Two levels: `default_fov` via `setup()`
+  and per-model `fov`.
+- New diagnostic `Model:footprint()` and `Model:overflows()` report the
+  model's true display range and whether it reaches past the canvas;
+  `:WrfmReport` shows `truncated=` and `channel=`.
+
 #### Appearance
 
-- New option `highlight` controls the wireframe color, set either as a hex
-  value (`"#RRGGBB"`, e.g. `highlight = "#ff8800"`) or as a theme highlight
-  group to link `WrfmPreview` to (e.g. `highlight = "Function"`, default
-  `"Yellow"`). Hex values always win; group links follow the active
-  colorscheme and re-apply on `ColorScheme`. Live views recolor instantly
-  (the group resolves by name at draw time, no re-render). A runtime setter
-  `wrfm.set_highlight("#00ff88")` is included. Malformed values raise on
-  `setup()` like unknown keys, without leaving the config half-updated.
-- Why: the wireframe color was hard-coded to a `Yellow` link. Users needed
-  both a fixed color for brand/logo art and a theme-aware option for
-  dashboard art that follows their colorscheme — the two `highlight` forms
-  map onto `fg` vs `link` in `nvim_set_hl()`.
+- New option `highlight` controls the wireframe color: hex `"#RRGGBB"` for a
+  fixed color, or a highlight group name for theme-aware coloring (default
+  `"Yellow"`). Runtime setter `wrfm.set_highlight("#00ff88")`.
 
 ### Changed
+
+#### Inline rendering
+
+- Inline previews now render through `virt_text` overlay on the host
+  buffer's real text lines instead of virtual lines. The source text is
+  never pushed or rearranged. **Behavior change**: 0.0.1 inline previews
+  pushed buffer content out of the way; now they overlay it.
+- `virt_lines_above` model option removed (it only applied to the old push
+  channel). The inline anchor is line 0 by default, or the cursor line
+  under `only_render_at_cursor`.
+- `overflow = "visible"` no longer merely warns and clips; it actually bleeds.
 
 #### Animation and controls
 
 - New option `pause_spin_when_unfocused` (default `true`): a spinning model
-  whose host window is not the focused window stops repainting instead of
-  burning a frame every tick behind other windows. The timer keeps running,
-  so the spin resumes the moment focus returns to the host window — no extra
-  autocmd machinery needed. Inline and bound models key off the buffer shown
-  in the current window; floats key off their anchor (or construction)
-  window. Per-model override via
+  whose host window is not focused stops repainting and resumes instantly
+  on refocus. Per-model override via
   `from_file({ pause_spin_when_unfocused = ... })`.
-- Why: the dashboard-logo use case kept spinning at full fps while hidden
-  under a fullscreen terminal float (e.g. Yazi) and during the switch into
-  a file, producing a stutter right before the file opened — it looked like
-  the model had to be "released" first. The teardown itself is
-  sub-millisecond (measured ~0.3–0.5 ms); the visible cost was the hidden
-  60fps repaint, which is why deferring cleanup asynchronously could not
-  fix it. With the new option, repaints drop to zero while the logo is
-  covered and resume instantly on refocus.
 
 ## [0.0.1] - 2026-08-27
 

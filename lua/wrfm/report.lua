@@ -32,9 +32,10 @@ end
 local function config_lines()
   local cfg = require("wrfm").config
   return {
-    ("config: fps=%s default_pitch=%s default_distance=%s default_auto_spin=%s default_spin_speed=%s default_watch=%s"):format(
+    ("config: fps=%s default_pitch=%s default_fov=%s default_distance=%s default_auto_spin=%s default_spin_speed=%s default_watch=%s"):format(
       tostring(cfg.fps),
       tostring(cfg.default_pitch),
+      tostring(cfg.default_fov),
       tostring(cfg.default_distance),
       tostring(cfg.default_auto_spin),
       tostring(cfg.default_spin_speed),
@@ -47,6 +48,10 @@ local function config_lines()
       tostring(cfg.integrations.wrfm.cursor_mode),
       tostring(cfg.integrations.wrfm.only_render_at_cursor),
       tostring(cfg.integrations.wrfm.clear_in_insert_mode)
+    ),
+    ("config: default_overflow=%s default_z_order=%s"):format(
+      tostring(cfg.default_overflow),
+      tostring(cfg.default_z_order)
     ),
     ("config: max_width=%s max_height=%s max_width_window_percentage=%s%% max_height_window_percentage=%s%%"):format(
       tostring(cfg.max_width),
@@ -71,12 +76,19 @@ local function model_lines()
     local spinning = model.timer and model.timer:is_active() or false
     local dist = model.dist_opt ~= nil and ("%.2f"):format(model.dist_opt)
       or ("auto %.2f"):format(model.fit_dist)
-    lines[#lines + 1] = ("  %s [%s] %s %sx%s pitch=%s yaw=%s dist=%s spin=%s speed=%.3f watch=%s buf=%s win=%s | %s"):format(
+    local channel = model.inline and model:_render_channel() or "-"
+    lines[#lines + 1] = ("  %s [%s] %s %sx%s ref=%sd fov=%s overflow=%s truncated=%s z_order=%s channel=%s pitch=%s yaw=%s dist=%s spin=%s speed=%.3f watch=%s buf=%s win=%s | %s"):format(
       tostring(model.id),
       mode,
       model.namespace or "-",
       tostring(model.width),
       tostring(model.height),
+      tostring(model:_view().ref_height),
+      tostring(model.fov),
+      model.overflow,
+      tostring(model:overflows()),
+      model.z_order,
+      channel,
       degrees(model.pitch),
       degrees(model.yaw),
       dist,

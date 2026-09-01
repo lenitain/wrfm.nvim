@@ -91,15 +91,24 @@ describe("api", function()
 
   it("attach is idempotent per buffer", function()
     local host = api.nvim_create_buf(true, false)
+    -- The overlay can only land on real lines that are wide enough to hold the
+    -- artwork, so give the buffer enough rows/columns.
+    local lines = {}
+    for _ = 1, 20 do
+      lines[#lines + 1] = string.rep(" ", 60)
+    end
+    api.nvim_buf_set_lines(host, 0, -1, false, lines)
     api.nvim_buf_set_name(host, cube)
     local first = wrfm.attach(host, { path = cube, width = 24, height = 8, auto_spin = false })
     local second = wrfm.attach(host, { path = cube, width = 30, height = 10, auto_spin = false })
     assert.are.equal(first, second, "second attach returns the existing model")
     assert.are.equal(1, #wrfm.get_models({ buffer = host }), "one inline model per buffer")
+    -- Re-attach re-renders the same model, so the namespace holds exactly the
+    -- marks the model tracks: no stacked or orphaned extmarks.
     assert.are.equal(
-      1,
       #api.nvim_buf_get_extmarks(host, wrfm.inline_ns, 0, -1, {}),
-      "no stacked extmarks"
+      #(first.inline_extmark_ids or {}),
+      "no stacked or leaked extmarks"
     )
     pcall(api.nvim_buf_delete, host, { force = true })
   end)
