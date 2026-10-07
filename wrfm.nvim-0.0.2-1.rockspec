@@ -1,4 +1,4 @@
-local modrev, specrev = "scm", "-1"
+local modrev, specrev = "0.0.2", "-1"
 
 rockspec_format = "3.0"
 package = "wrfm.nvim"
@@ -24,6 +24,7 @@ test_dependencies = {
 
 source = {
   url = "git+https://github.com/lenitain/wrfm.nvim.git",
+  tag = "v0.0.2",
 }
 
 test = {

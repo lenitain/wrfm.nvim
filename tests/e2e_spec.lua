@@ -360,7 +360,13 @@ describe("e2e", function()
 
     local bufnr = api.nvim_create_buf(true, false)
     api.nvim_buf_set_name(bufnr, cube)
-    local inline = wrfm.attach(bufnr, { path = cube, width = 20, height = 6, watch = false })
+    local inline = wrfm.attach(bufnr, {
+      path = cube,
+      at = { line = 0, col = 0 },
+      width = 20,
+      height = 6,
+      watch = false,
+    })
     assert.are.equal(1, #wrfm.get_models(), "precondition: inline model live")
     api.nvim_buf_delete(bufnr, { force = true })
     api.nvim_exec_autocmds("BufEnter", {})

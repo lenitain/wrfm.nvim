@@ -22,8 +22,10 @@ Features~
 - Auto-spin animation: smooth rotation with libuv timers
 - Works everywhere: ssh, tmux, tty, any terminal
 
-Opening a `.wrfm` file sets `filetype=wrfm` (shipped ftdetect), which arms
-the auto-attach integration below.
+Opening a `.wrfm` file sets `filetype=wrfm` (shipped ftdetect). Nothing is
+rendered on the strength of that filetype alone: a preview appears only where
+you ask for it (`:WrfmHere`, `wrfm.attach()`), or where the opt-in auto-attach
+integration below is pointed.
 
 Run `:helptags ALL` after installation to enable the tags below.
 
@@ -67,11 +69,13 @@ SETUP                                                           *wrfm.setup*
       -- Inline preview
       integrations = {
         wrfm = {
-          enabled = true,                     -- auto-attach for *.wrfm
+          enabled = false,                    -- opt-in auto-attach for
+                                              -- `filetypes` buffers
+          at = nil,                           -- REQUIRED to paint: "cursor"
+                                              -- or { line = <int>, col = <int> }
+          mode = "overlay",                   -- "overlay" or "popup"
           clear_in_insert_mode = false,       -- hide during insert mode
-          only_render_at_cursor = false,      -- show only at cursor
-          cursor_mode = "popup",              -- "popup" or "inline"
-          filetypes = { "wrfm" },
+          filetypes = { "wrfm" },             -- host filetypes to attach to
         },
       },
     })
@@ -277,6 +281,14 @@ the `.wrfm` source unless `opts.path` is given.  Attaching to a buffer that
 already carries an inline preview re-renders it instead of stacking a second
 extmark/timer. Returns a |WrfmModel|.
 
+`opts.at` is the placement and is required -- `"cursor"`, or
+`{ line = <int>, col = <int> }` pinning the canvas' top-left cell to a 0-based
+buffer line and column.  Without it the integration default
+`integrations.wrfm.at` is used; when that is unset too, `attach()` raises
+instead of picking a spot, because an inline preview writes into cells the
+buffer already owns.  `opts.mode` is `"overlay"` (default; composite into the
+buffer) or `"popup"` (floating window, which needs `at = "cursor"`).
+
                                                            *wrfm.detach()*
     wrfm.detach({bufnr})
 
@@ -297,7 +309,7 @@ COMMANDS                                                    *wrfm.commands*
 :WrfmList       List live viewers: id, mode, spin state, source path.
 
                                                                *:WrfmHere*
-:WrfmHere       Attach an inline preview to the current buffer.
+:WrfmHere       Attach an inline preview at the cursor of the current buffer.
 
                                                             *:WrfmDetach*
 :WrfmDetach     Remove the inline preview from the current buffer.
@@ -448,28 +460,43 @@ buffer's real text cells.  The text scrolls with the buffer naturally and
 is never pushed or rearranged (there is no virtual-lines push channel); no
 graphics protocol or special terminal is needed.
 
-Use `:WrfmHere` to toggle the preview, or configure auto-attach:
+Use `:WrfmHere` to toggle the preview.  Nothing appears on its own: opening a
+`.wrfm` file shows plain text, because an inline preview is a placement you
+ask for.  Rendering needs both preconditions -- the feature on and a position
+specified -- so `attach()` without `at` raises instead of choosing a spot, and
+the auto-attach integration, when enabled, binds a preview to every buffer
+whose filetype is in `filetypes` only once `at` names a place:
 
 >lua
     require("wrfm").setup({
       integrations = {
         wrfm = {
-          enabled = true,                     -- auto-attach for *.wrfm
+          enabled = false,                    -- opt-in auto-attach for
+                                              -- `filetypes` buffers
+          at = nil,                           -- REQUIRED to paint: "cursor"
+                                              -- or { line = <int>, col = <int> }
+          mode = "overlay",                   -- "overlay" or "popup"
           clear_in_insert_mode = false,       -- hide during insert mode
-          only_render_at_cursor = false,      -- show only at cursor
-          cursor_mode = "popup",              -- "popup" or "inline"
-          filetypes = { "wrfm" },
+          filetypes = { "wrfm" },             -- host filetypes to attach to
         },
       },
     })
 <
 
-When `only_render_at_cursor` is true, the preview appears near the cursor
-line only.  `cursor_mode = "popup"` shows a temporary floating window;
-`"inline"` anchors the extmark to the cursor line.  In cursor-only mode the
-preview follows the cursor: popup mode reopens at each new cursor position
-and inline mode re-anchors the extmark, instead of closing on the first
-movement.
+`at = "cursor"` follows the cursor as it moves; `at = { line = <int>, col =
+<int> }` (0-based buffer line and column) pins the canvas' top-left cell and
+stays put.  `mode = "overlay"` composites the art into the buffer's own cells;
+`mode = "popup"` opens a floating window instead, which is cursor-anchored, so
+it requires `at = "cursor"`.
+
+`setup()` merges its options, so `at` can be given a value but not un-set
+through it: to go back to "no placement" at runtime, clear
+`require("wrfm").config.integrations.wrfm.at` directly (or restart Neovim).
+
+Note that the default `filetypes` hosts the model's own source: with the
+integration on, a preview is painted over the text lines it is anchored to,
+which is rarely what you want while reading or editing the model.  Prefer
+`:WrfmHere` (which places the preview at the cursor) for that case.
 
 An inline preview overlays the same cells the buffer paints, so it can
 collide with text and other content. Two options govern that compositing
@@ -533,7 +560,7 @@ HOT RELOAD                                                *wrfm.hot-reload*
 With watch enabled (the default), viewers follow their source file and
 repaint ~150ms after changes, preserving pitch/yaw/distance/spin state.
 
-Inline previews also follow *unsaved* edits: an `on_lines` watcher on the
+Inline previews also follow unsaved edits: an `on_lines` watcher on the
 buffer re-parses the buffer content as you type, so the preview updates
 without a `:write`. The two channels dedup against the last successfully
 parsed text - writing the already-shown content back to disk does not

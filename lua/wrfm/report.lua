@@ -28,6 +28,20 @@ local function degrees(value)
   return ("%.0f"):format(math.deg(value))
 end
 
+---Render a placement for the report: `unset` is a first-class state — it means
+---nothing is drawn, not that a default was chosen.
+---@param at WrfmPlacement?
+---@return string
+local function placement_label(at)
+  if at == nil then
+    return "unset"
+  end
+  if at == "cursor" then
+    return "cursor"
+  end
+  return ("%d,%d"):format(at.line, at.col or 0)
+end
+
 ---@return string[]
 local function config_lines()
   local cfg = require("wrfm").config
@@ -41,12 +55,12 @@ local function config_lines()
       tostring(cfg.default_spin_speed),
       tostring(cfg.default_watch)
     ),
-    ("config: default_size=%sx%s integrations.wrfm.enabled=%s cursor_mode=%s only_render_at_cursor=%s clear_in_insert_mode=%s"):format(
+    ("config: default_size=%sx%s integrations.wrfm.enabled=%s at=%s mode=%s clear_in_insert_mode=%s"):format(
       tostring(cfg.default_width),
       tostring(cfg.default_height),
       tostring(cfg.integrations.wrfm.enabled),
-      tostring(cfg.integrations.wrfm.cursor_mode),
-      tostring(cfg.integrations.wrfm.only_render_at_cursor),
+      placement_label(cfg.integrations.wrfm.at),
+      tostring(cfg.integrations.wrfm.mode),
       tostring(cfg.integrations.wrfm.clear_in_insert_mode)
     ),
     ("config: default_overflow=%s default_z_order=%s"):format(
@@ -77,7 +91,7 @@ local function model_lines()
     local dist = model.dist_opt ~= nil and ("%.2f"):format(model.dist_opt)
       or ("auto %.2f"):format(model.fit_dist)
     local channel = model.inline and model:_render_channel() or "-"
-    lines[#lines + 1] = ("  %s [%s] %s %sx%s ref=%sd fov=%s overflow=%s truncated=%s z_order=%s channel=%s pitch=%s yaw=%s dist=%s spin=%s speed=%.3f watch=%s buf=%s win=%s | %s"):format(
+    lines[#lines + 1] = ("  %s [%s] %s %sx%s ref=%sd fov=%s overflow=%s truncated=%s z_order=%s channel=%s at=%s pitch=%s yaw=%s dist=%s spin=%s speed=%.3f watch=%s buf=%s win=%s | %s"):format(
       tostring(model.id),
       mode,
       model.namespace or "-",
@@ -89,6 +103,7 @@ local function model_lines()
       tostring(model:overflows()),
       model.z_order,
       channel,
+      placement_label(model.placement),
       degrees(model.pitch),
       degrees(model.yaw),
       dist,

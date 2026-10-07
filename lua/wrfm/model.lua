@@ -36,6 +36,11 @@ local uv = vim.uv or vim.loop
 ---@field border? boolean float border and title (default true; false = seamless)
 ---@field overflow? WrfmOverflow inline: "visible" bleeds into surrounding text, "clip" truncates at canvas edge (default from `default_overflow`)
 ---@field z_order? WrfmZOrder how this model composites where it overlaps other cells (default from `default_z_order`)
+---@field at? WrfmPlacement inline placement: "cursor" or { line = <int>, col = <int> }.
+---   Required for an inline preview (see wrfm.attach()); floats place themselves
+---   as windows and ignore it
+---@field mode? WrfmInlineMode inline: "overlay" (paint into the buffer) or "popup"
+---   (float at the cursor; needs `at = "cursor"`)
 ---@field id? WrfmId stable registry identity (default "model-N")
 
 ---@class WrfmModelRestoreSnapshot
@@ -89,8 +94,10 @@ local uv = vim.uv or vim.loop
 ---@field inline_bufnr? integer target buffer for inline (may differ from host buf)
 ---@field inline_ns integer extmark namespace (shared, set once by init)
 ---@field inline_extmark_ids? integer[] overlay extmark ids of the current frame
----@field only_render_at_cursor? boolean show preview only near cursor
----@field cursor_mode? "inline"|"popup" cursor-only rendering mode
+---@field placement? WrfmPlacement where an inline preview draws, as passed to
+--   attach(): "cursor" or { line, col }. nil = never rendered (there is no
+--   spelling for "draw it wherever", by design)
+---@field mode WrfmInlineMode inline channel: "overlay" or "popup"
 ---@field popup_winid? integer temporary cursor-popup window handle
 ---@field overlay_row? integer buffer line the canvas top-left cell mapped to last frame
 ---@field overlay_col? integer buffer column the canvas top-left cell mapped to last frame
@@ -443,7 +450,7 @@ end
 ---@private
 ---@return boolean
 function Model:_uses_popup()
-  return self.only_render_at_cursor and self.cursor_mode == "popup"
+  return self.inline == true and self.mode == "popup"
 end
 
 ---@private
@@ -568,6 +575,10 @@ function Model.from_file(path, options)
       "z_order",
       Model.Z_ORDERS
     ),
+    -- Inline placement/channel. wrfm.attach() overwrites both after resolving
+    -- them against the integration config; a float ignores them entirely.
+    placement = options.at,
+    mode = opt(options.mode, "overlay"),
     anchor_win = options.window,
     anchor_buf = options.window
         and vim.api.nvim_win_is_valid(options.window)

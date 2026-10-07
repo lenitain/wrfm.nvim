@@ -46,11 +46,11 @@ require("wrfm").setup({
   -- 内联预览（在缓冲内显示线框，非浮窗）
   integrations = {
     wrfm = {
-      enabled = true,                -- 打开 .wrfm 文件时自动显示内联预览
+      enabled = false,               -- 默认关闭：预览只在你要的地方出现（:WrfmHere）
+      at = nil,                      -- 必填才会渲染："cursor" 或 { line = n, col = n }
+      mode = "overlay",              -- "overlay" 行内叠加 或 "popup" 光标浮窗
       clear_in_insert_mode = false,  -- 插入模式时隐藏预览
-      only_render_at_cursor = false, -- 只在光标附近显示
-      cursor_mode = "popup",         -- "popup" 浮窗 或 "inline" 行内
-      filetypes = { "wrfm" },
+      filetypes = { "wrfm" },        -- 勾选后要自动附加的宿主 filetype
     },
   },
 })
@@ -97,21 +97,34 @@ require("wrfm").setup({
 ```
 
 **预期**：
-- 如果 `integrations.wrfm.enabled = true`（默认），缓冲顶部自动出现一截 braille 线框预览
-- 预览下方是 .wrfm 原始文本（`wrfm 1`、`vertices ...`、`v ...`、`e ...`）
-- 预览随缓冲滚动——往下滚，预览跟着走
+- 默认（`integrations.wrfm.enabled = false`）打开就是**纯文本**：`wrfm 1`、`vertices ...`、`v ...`、`e ...`，没有任何东西盖在字上
+- 执行 `:WrfmHere` 后才出现预览，位置**就是光标行**（`at = "cursor"`）：它是 virt_text 叠加，画布左上角对齐光标行，所以会盖住那几行源码，并随缓冲滚动、随光标移动
 - 线框在旋转
 
-**手动开关**（如果 `enabled = false`）：
+**手动开关**：
 
 ```vim
-:WrfmHere       " 在当前缓冲附加预览
+:WrfmHere       " 在光标处附加预览
 :WrfmDetach     " 移除预览
 ```
 
+**固定位置**（不走光标，直接钉在某一行）：
+
+```lua
+require("wrfm").attach(0, { at = { line = 0, col = 0 } })  -- 0-based 行/列
+```
+
+> 渲染需要**两个**前提同时成立：功能开启 + 指定位置。`attach()` 不给 `at`
+> 会直接报错（`no position`），不会自己挑地方；自动附加也一样，`enabled = true`
+> 但 `at = nil` 时什么都不会画。想让打开 .wrfm 就自动附加，需要同时设置：
+> `integrations = { wrfm = { enabled = true, at = "cursor" } }`。注意默认
+> `filetypes = { "wrfm" }` 的宿主就是模型自己的源码，开着它打开 .wrfm 会用渲染
+> 结果盖住源码行——读书/改模型时用 `:WrfmHere` 更合适。
+
 **交互验证**：
+- 移动光标 → 预览跟着换行（`at = "cursor"`；固定 `at` 则原地不动）
 - 在预览下方编辑 .wrfm 文本（比如改一个顶点坐标），保存 → 预览自动更新（热重载）
-- 执行 `:WrfmList` → 应看到 `model-N  inline  spin=true  /path/to/anvil.wrfm`
+- 执行 `:WrfmList` → 应看到 `model-N  inline  at=cursor  spin=true  /path/to/anvil.wrfm`
 - 执行 `:WrfmDetach` → 预览消失，原文不受影响
 
 ---

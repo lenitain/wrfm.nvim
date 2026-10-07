@@ -27,5 +27,9 @@
 # Neovim logs
 /nvim.log
 
+# Generated help tags (doc/wrfm.txt is the source; `:helptags doc` writes this,
+# and plugin managers regenerate it on install/update)
+doc/tags
+
 # Golden fixtures are version-controlled (whitelist)
 # tests/fixtures/**/*.braille

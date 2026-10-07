@@ -99,8 +99,20 @@ describe("api", function()
     end
     api.nvim_buf_set_lines(host, 0, -1, false, lines)
     api.nvim_buf_set_name(host, cube)
-    local first = wrfm.attach(host, { path = cube, width = 24, height = 8, auto_spin = false })
-    local second = wrfm.attach(host, { path = cube, width = 30, height = 10, auto_spin = false })
+    local first = wrfm.attach(host, {
+      path = cube,
+      at = { line = 0, col = 0 },
+      width = 24,
+      height = 8,
+      auto_spin = false,
+    })
+    local second = wrfm.attach(host, {
+      path = cube,
+      at = { line = 0, col = 0 },
+      width = 30,
+      height = 10,
+      auto_spin = false,
+    })
     assert.are.equal(first, second, "second attach returns the existing model")
     assert.are.equal(1, #wrfm.get_models({ buffer = host }), "one inline model per buffer")
     -- Re-attach re-renders the same model, so the namespace holds exactly the
@@ -245,9 +257,56 @@ describe("api", function()
     )
   end)
 
-  it("opening a .wrfm buffer auto-attaches", function()
+  it("opening a .wrfm buffer renders nothing by default", function()
     dofile(repo .. "/ftdetect/wrfm.lua")
-    wrfm._ensure_integration_hooks()
+    wrfm.setup({ integrations = { wrfm = { enabled = false } } })
+
+    local path = helpers.fixture_model("cube")
+    local bufnr = api.nvim_create_buf(true, false)
+    api.nvim_buf_set_name(bufnr, path)
+    vim.bo[bufnr].filetype = "wrfm"
+
+    assert.are.equal(
+      0,
+      #wrfm.get_models({ buffer = bufnr }),
+      "the default filetype alone paints no preview over its own source"
+    )
+    pcall(api.nvim_buf_delete, bufnr, { force = true })
+  end)
+
+  it("enabling the integration without a placement attaches nothing", function()
+    dofile(repo .. "/ftdetect/wrfm.lua")
+    -- Rendering is the conjunction of "on" and "placed": enabled alone used to
+    -- be enough because the renderer invented (0,0) for itself. setup() merges
+    -- its options, so a nil cannot be expressed through it — clear the placement
+    -- directly to model a config that was never given one.
+    wrfm.config.integrations.wrfm.at = nil
+    wrfm.setup({ integrations = { wrfm = { enabled = true } } })
+
+    local path = helpers.fixture_model("cube")
+    local bufnr = api.nvim_create_buf(true, false)
+    api.nvim_buf_set_name(bufnr, path)
+    vim.bo[bufnr].filetype = "wrfm"
+
+    assert.are.equal(
+      0,
+      #wrfm.get_models({ buffer = bufnr }),
+      "enabled without at must not paint anywhere"
+    )
+    assert.are.equal(
+      0,
+      #api.nvim_buf_get_extmarks(bufnr, wrfm.inline_ns, 0, -1, {}),
+      "not a single overlay extmark is placed"
+    )
+    wrfm.setup({ integrations = { wrfm = { enabled = false } } })
+    pcall(api.nvim_buf_delete, bufnr, { force = true })
+  end)
+
+  it("opting in auto-attaches on FileType once placed", function()
+    dofile(repo .. "/ftdetect/wrfm.lua")
+    -- setup() alone arms the hook: the integration is off by default, so the
+    -- load-time arming in plugin/wrfm.lua is a no-op until this lands.
+    wrfm.setup({ integrations = { wrfm = { enabled = true, at = { line = 0, col = 0 } } } })
 
     local path = helpers.fixture_model("cube")
     local bufnr = api.nvim_create_buf(true, false)
@@ -255,13 +314,54 @@ describe("api", function()
     vim.bo[bufnr].filetype = "wrfm"
 
     local models = wrfm.get_models({ buffer = bufnr })
-    assert.are.equal(1, #models, "FileType arms the inline preview automatically")
+    assert.are.equal(1, #models, "FileType arms the inline preview once enabled and placed")
     if models[1] then
       assert.is_truthy(models[1].inline, "auto-attached model is an inline preview")
-      assert.is_false(models[1].only_render_at_cursor, "defaults apply to auto-attach")
+      assert.are.same(
+        { line = 0, col = 0 },
+        models[1].placement,
+        "the configured placement is the one that gets used"
+      )
     end
     wrfm.detach(bufnr)
+    -- Back to the shipped default so later specs see a plain-text buffer too.
+    wrfm.setup({ integrations = { wrfm = { enabled = false, at = nil } } })
     pcall(api.nvim_buf_delete, bufnr, { force = true })
+  end)
+
+  it("attach refuses to pick a position", function()
+    dofile(repo .. "/ftdetect/wrfm.lua")
+    wrfm.config.integrations.wrfm.at = nil -- setup() merges; nil must be written directly
+
+    local host = api.nvim_create_buf(true, false)
+    api.nvim_buf_set_name(host, cube)
+    local ok, err = pcall(wrfm.attach, host, { path = cube })
+    assert.is_false(ok, "attach without a placement raises")
+    assert.is_truthy(
+      tostring(err):find("no position", 1, true),
+      "the error says the placement is missing: " .. tostring(err)
+    )
+    assert.are.equal(0, #wrfm.get_models({ buffer = host }), "nothing was attached")
+    pcall(api.nvim_buf_delete, host, { force = true })
+  end)
+
+  it("attach rejects the removed cursor keys", function()
+    local host = api.nvim_create_buf(true, false)
+    api.nvim_buf_set_name(host, cube)
+    local ok, err = pcall(wrfm.attach, host, { path = cube, only_render_at_cursor = true })
+    assert.is_false(ok, "the removed key raises instead of being ignored")
+    assert.is_truthy(tostring(err):find("was removed", 1, true), "error names the removal")
+    pcall(api.nvim_buf_delete, host, { force = true })
+  end)
+
+  it("mode = popup requires the cursor placement", function()
+    local host = api.nvim_create_buf(true, false)
+    api.nvim_buf_set_name(host, cube)
+    local ok, err =
+      pcall(wrfm.attach, host, { path = cube, at = { line = 2, col = 0 }, mode = "popup" })
+    assert.is_false(ok, "a fixed-position popup is refused")
+    assert.is_truthy(tostring(err):find("cursor", 1, true), 'error points at at = "cursor"')
+    pcall(api.nvim_buf_delete, host, { force = true })
   end)
 
   it("command smoke", function()
@@ -314,7 +414,7 @@ describe("api", function()
 
   it("move on inline model is a no-op", function()
     local host = api.nvim_create_buf(true, false)
-    local model = wrfm.attach(host, { path = cube })
+    local model = wrfm.attach(host, { path = cube, at = { line = 0, col = 0 } })
     assert.is_nil(model.winid, "precondition: inline mode has no float")
     assert.is_true(pcall(model.move, model, 4, 4), "move without a float raises nothing")
     assert.is_nil(model.winid, "inline model stays window-less after move")

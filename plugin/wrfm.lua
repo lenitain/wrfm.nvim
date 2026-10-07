@@ -42,7 +42,17 @@ vim.api.nvim_create_user_command("WrfmList", function()
   ---@param model WrfmModel
   local function describe(model)
     local mode = model.inline and "inline" or model.winid and "float" or "bound"
-    return ("%s\t%s\tspin=%s\t%s"):format(model.id, mode, tostring(model.auto_spin), model.path)
+    local at = model.placement or "-"
+    if type(at) == "table" then
+      at = ("%d,%d"):format(at.line, at.col or 0)
+    end
+    return ("%s\t%s\tat=%s\tspin=%s\t%s"):format(
+      model.id,
+      mode,
+      at,
+      tostring(model.auto_spin),
+      model.path
+    )
   end
   local models = wrfm.get_models()
   if #models == 0 then
@@ -55,15 +65,18 @@ end, {
   desc = "List live .wrfm viewers (id, mode, spin state, source path)",
 })
 
+-- "Here" is the cursor, stated explicitly: the command is the user asking for a
+-- preview at a place they picked, which is the whole contract. There is no
+-- implicit fallback in attach() to lean on.
 vim.api.nvim_create_user_command("WrfmHere", function()
   local bufnr = vim.api.nvim_get_current_buf()
   local path = vim.api.nvim_buf_get_name(bufnr)
   if path == "" then
     error("wrfm: current buffer has no file name", 0)
   end
-  wrfm.attach(bufnr, { path = path })
+  wrfm.attach(bufnr, { path = path, at = "cursor" })
 end, {
-  desc = "Attach inline wireframe preview to the current buffer",
+  desc = "Attach an inline wireframe preview at the cursor",
 })
 
 vim.api.nvim_create_user_command("WrfmDetach", function()
@@ -96,6 +109,9 @@ end, {
   desc = "Show a diagnostic report of all live wrfm models",
 })
 
--- Arm the FileType auto-attach now: waiting for the first attach() would be
--- too late — opening a .wrfm buffer is exactly the flow the hooks serve.
+-- Arm the FileType auto-attach hook. The integration is off by default, so this
+-- is a no-op unless it was already turned on; setup() re-arms it the moment
+-- `integrations.wrfm.enabled = true` lands, because waiting for the first
+-- attach() would be too late — opening a matching buffer is exactly the flow
+-- the hook serves.
 wrfm._ensure_integration_hooks()

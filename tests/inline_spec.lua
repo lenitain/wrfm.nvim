@@ -23,6 +23,18 @@ local function wide_buf(rows, cols)
   return bufnr
 end
 
+-- Placement is a mandatory precondition for an inline preview. The specs below
+-- are about compositing, anchoring and lifecycle rather than placement itself,
+-- so they pin the canvas to the buffer's top-left unless the case under test
+-- says otherwise (cursor-follow and popup pass `at = "cursor"` explicitly).
+local function attach(bufnr, opts)
+  opts = opts or {}
+  if opts.at == nil then
+    opts.at = { line = 0, col = 0 }
+  end
+  return wrfm.attach(bufnr, opts)
+end
+
 -- Read back the overlay extmarks a model placed, via their ids. The range
 -- query (`nvim_buf_get_extmarks`) reports virt_text overlay marks with shifted
 -- positions/ids on some Neovim builds, so we read each mark individually.
@@ -50,12 +62,19 @@ local function extmark_count(bufnr)
   return #vim.api.nvim_buf_get_extmarks(bufnr, wrfm.inline_ns, 0, -1, {})
 end
 
+-- Exercise the FileType auto-attach hook with a cursor placement. Both
+-- preconditions are set here on purpose: the integration is enabled AND given a
+-- position, which is the only combination that paints anything.
 local function arm_cursor_follow(overrides)
-  wrfm.setup({ integrations = { wrfm = overrides } })
+  wrfm.setup({
+    integrations = {
+      wrfm = vim.tbl_extend("force", { enabled = true, at = "cursor" }, overrides),
+    },
+  })
   wrfm._ensure_integration_hooks()
   return function()
     wrfm.setup({
-      integrations = { wrfm = { only_render_at_cursor = false, cursor_mode = "popup" } },
+      integrations = { wrfm = { enabled = false, at = nil, mode = "overlay" } },
     })
     wrfm._ensure_integration_hooks()
   end
@@ -83,6 +102,7 @@ describe("inline", function()
     model.inline = true
     model.inline_bufnr = bufnr
     model.inline_ns = wrfm.inline_ns
+    model.placement = { line = 0, col = 0 } -- hand-rolled attach: state the place
     model:render()
 
     assert.is_truthy(model.inline_extmark_ids, "none = clear; extmarks created after render")
@@ -104,6 +124,28 @@ describe("inline", function()
     pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
   end)
 
+  it("an unplaced inline model paints nothing", function()
+    local bufnr = wide_buf(20, 60)
+    local model = wrfm.from_file(anvil, {
+      width = 40,
+      height = 12,
+      auto_spin = false,
+      watch = false,
+    })
+    model.inline = true
+    model.inline_bufnr = bufnr
+    model.inline_ns = wrfm.inline_ns
+    model.placement = nil -- rendering on, position unspecified
+
+    assert.is_true(model:render(), "render is a no-op draw, not an error")
+    assert.is_nil(model.inline_extmark_ids, "no frame was placed")
+    assert.are.equal(0, extmark_count(bufnr), "not one extmark lands in the buffer")
+    assert.is_nil(model.overlay_row, "no origin was invented")
+
+    model:clear()
+    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  end)
+
   it("spin repaints the overlay", function()
     local bufnr = wide_buf(20, 60)
     local model = wrfm.from_file(cube, {
@@ -118,6 +160,7 @@ describe("inline", function()
     model.inline = true
     model.inline_bufnr = bufnr
     model.inline_ns = wrfm.inline_ns
+    model.placement = { line = 0, col = 0 } -- hand-rolled attach: state the place
     model:render()
 
     local function snapshot()
@@ -150,7 +193,7 @@ describe("inline", function()
     vim.api.nvim_buf_set_name(bufnr, cube)
 
     local model =
-      wrfm.attach(bufnr, { path = cube, width = 30, height = 8, auto_spin = false, watch = false })
+      attach(bufnr, { path = cube, width = 30, height = 8, auto_spin = false, watch = false })
     assert.is_truthy(model.inline, "attach sets inline flag")
     assert.are.equal(bufnr, model.inline_bufnr, "attach binds to given buffer")
     assert.is_truthy(model.inline_extmark_ids, "attach creates overlay extmarks")
@@ -173,17 +216,17 @@ describe("inline", function()
     local bufnr = wide_buf(20, 60)
     vim.api.nvim_buf_set_name(bufnr, cube)
 
-    local model = wrfm.attach(bufnr, {
+    local model = attach(bufnr, {
       path = cube,
       width = 30,
       height = 8,
       auto_spin = false,
       watch = false,
-      only_render_at_cursor = true,
-      cursor_mode = "popup",
+      at = "cursor",
+      mode = "popup",
     })
-    assert.is_truthy(model.only_render_at_cursor, "popup model has only_render_at_cursor set")
-    assert.are.equal("popup", model.cursor_mode, "cursor_mode is popup")
+    assert.are.equal("cursor", model.placement, "popup model is placed at the cursor")
+    assert.are.equal("popup", model.mode, "mode is popup")
     assert.is_truthy(
       model.popup_winid and vim.api.nvim_win_is_valid(model.popup_winid),
       "popup window opened"
@@ -206,7 +249,7 @@ describe("inline", function()
     vim.api.nvim_buf_set_name(bufnr, cube)
 
     local model =
-      wrfm.attach(bufnr, { path = cube, width = 30, height = 8, auto_spin = false, watch = false })
+      attach(bufnr, { path = cube, width = 30, height = 8, auto_spin = false, watch = false })
     assert.is_truthy(model.inline_extmark_ids, "precondition: extmarks exist")
     assert.is_true(#model.inline_extmark_ids > 0, "precondition: overlay painted")
     local saved_count = extmark_count(bufnr)
@@ -252,14 +295,14 @@ describe("inline", function()
   end)
 
   it("cursor follow re-anchors the overlay (inline mode)", function()
-    local restore = arm_cursor_follow({ only_render_at_cursor = true, cursor_mode = "inline" })
+    local restore = arm_cursor_follow({ mode = "overlay" })
     local original_buf = vim.api.nvim_get_current_buf()
 
     local bufnr = wide_buf(30, 60)
     vim.api.nvim_buf_set_name(bufnr, cube)
     vim.bo[bufnr].filetype = "wrfm"
     local models = wrfm.get_models({ buffer = bufnr })
-    assert.are.equal(1, #models, "auto-attach created the cursor-only preview")
+    assert.are.equal(1, #models, "auto-attach created the cursor-placed preview")
     local model = models[1]
     if not model then
       restore()
@@ -284,7 +327,7 @@ describe("inline", function()
   end)
 
   it("cursor follow reopens the popup (popup mode)", function()
-    local restore = arm_cursor_follow({ only_render_at_cursor = true })
+    local restore = arm_cursor_follow({ mode = "popup" })
     local original_buf = vim.api.nvim_get_current_buf()
 
     local bufnr = wide_buf(30, 60)
@@ -322,13 +365,16 @@ describe("inline", function()
   end)
 
   it("cursor follow spares non-cursor models", function()
-    local restore = arm_cursor_follow({ only_render_at_cursor = true, cursor_mode = "inline" })
+    local restore = arm_cursor_follow({ mode = "overlay" })
     local original_buf = vim.api.nvim_get_current_buf()
 
     local bufnr = wide_buf(30, 60)
     vim.api.nvim_buf_set_name(bufnr, cube)
-    local model = wrfm.attach(bufnr, { path = cube, only_render_at_cursor = false, watch = false })
-    assert.is_false(model.only_render_at_cursor, "explicit opt-out wins over integration config")
+    -- A fixed placement instead of the integration's cursor: CursorMoved must
+    -- leave it exactly where it was put.
+    local model = attach(bufnr, { path = cube, at = { line = 4, col = 0 }, watch = false })
+    assert.are.same({ line = 4, col = 0 }, model.placement, "explicit placement wins over config")
+    assert.are.equal(4, model.overlay_row, "the canvas sits on the requested line")
 
     vim.api.nvim_set_current_buf(bufnr)
     local row_before = model.overlay_row
@@ -336,8 +382,8 @@ describe("inline", function()
     vim.api.nvim_exec_autocmds("CursorMoved", { pattern = "wrfm" })
     vim.wait(50)
 
-    assert.are.equal(row_before, model.overlay_row, "overlay stays put for normal previews")
-    assert.is_nil(model.popup_winid, "no popup appears for normal previews")
+    assert.are.equal(row_before, model.overlay_row, "overlay stays put for fixed placements")
+    assert.is_nil(model.popup_winid, "no popup appears for overlay previews")
 
     wrfm.clear()
     pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
@@ -359,7 +405,7 @@ describe("inline", function()
       "",
     })
     vim.bo[bufnr].modified = false
-    local model = wrfm.attach(bufnr, { path = path, width = 20, height = 6, auto_spin = false })
+    local model = attach(bufnr, { path = path, width = 20, height = 6, auto_spin = false })
     assert.is_truthy(model.buf_watching, "buffer watcher armed for inline previews")
     assert.is_truthy(model.watch_started, "disk watcher runs alongside the buffer channel")
     assert.are.equal(2, #model.vertices, "initial geometry loaded")
@@ -463,7 +509,7 @@ describe("inline", function()
       "",
     })
     local model =
-      wrfm.attach(bufnr, { path = path, width = 20, height = 6, auto_spin = false, watch = false })
+      attach(bufnr, { path = path, width = 20, height = 6, auto_spin = false, watch = false })
     assert.is_nil(model.buf_watching, "no buffer watcher when watch=false")
 
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "garbage", "" })
@@ -485,7 +531,7 @@ describe("inline", function()
     lines[2] = lines[2]:sub(1, 13) .. "你好" .. lines[2]:sub(14)
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
-    local model = wrfm.attach(bufnr, {
+    local model = attach(bufnr, {
       path = cube,
       width = 30,
       height = 8,
@@ -561,7 +607,7 @@ describe("inline", function()
       place(r, 13, "TEXT")
     end
 
-    local model = wrfm.attach(bufnr, { path = cube, width = 30, height = 8, auto_spin = false })
+    local model = attach(bufnr, { path = cube, width = 30, height = 8, auto_spin = false })
     assert.are.equal("model", model.z_order, "default z_order is model")
     local model_marks = overlay_marks(model)
     assert.is_truthy(#model_marks > 0, "model z_order paints the overlay")
@@ -577,7 +623,7 @@ describe("inline", function()
 
     wrfm.clear()
 
-    local text_model = wrfm.attach(bufnr, {
+    local text_model = attach(bufnr, {
       path = cube,
       width = 30,
       height = 8,
@@ -606,7 +652,7 @@ describe("inline", function()
   it("overflow visible bleeds beyond the canvas", function()
     local bufnr = wide_buf(30, 60)
     vim.api.nvim_buf_set_name(bufnr, cube)
-    local model = wrfm.attach(bufnr, {
+    local model = attach(bufnr, {
       path = cube,
       width = 10,
       height = 6,
@@ -631,7 +677,7 @@ describe("inline", function()
 
     -- A clipped model, by contrast, never requests any bleed.
     wrfm.clear()
-    local clip_model = wrfm.attach(bufnr, {
+    local clip_model = attach(bufnr, {
       path = cube,
       width = 10,
       height = 6,

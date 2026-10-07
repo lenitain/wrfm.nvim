@@ -3,6 +3,26 @@ local Model = require("wrfm.model")
 ---Stable model identity assigned by wrfm.from_file.
 ---@alias WrfmId string
 
+---Where an inline preview is placed. `"cursor"` follows the cursor; the table
+---pins the canvas' top-left cell to a 0-based buffer (line, col). Placement is
+---a precondition, not a default: without one there is nowhere to draw, so
+---nothing is rendered (see wrfm.attach()).
+---@alias WrfmPlacement "cursor"|{ line: integer, col?: integer }
+
+---How an inline preview paints. `"overlay"` composites the art into the
+---buffer's own cells at the placement; `"popup"` opens a floating window, which
+---only makes sense at the cursor (`at = "cursor"`).
+---@alias WrfmInlineMode "overlay"|"popup"
+
+---Buffer filetypes an inline preview may be attached to, and where.
+---@class WrfmIntegrationConfig
+---@field enabled boolean turn the FileType auto-attach hook on (default false)
+---@field at WrfmPlacement? required for auto-attach: where the preview goes.
+---   `nil` = the hook attaches nothing, so enabling alone never renders
+---@field mode WrfmInlineMode how an auto-attached preview paints (default "overlay")
+---@field clear_in_insert_mode boolean hide the preview while inserting
+---@field filetypes string[] host filetypes the hook watches
+
 ---@class WrfmConfig
 ---@field default_width? integer canvas columns (nil = 80% of the host window)
 ---@field default_height? integer canvas rows (nil = 60% of the host window)
@@ -57,11 +77,64 @@ local KNOWN_KEYS = {
 
 local KNOWN_INTEGRATION_KEYS = {
   enabled = true,
+  at = true,
+  mode = true,
   clear_in_insert_mode = true,
-  only_render_at_cursor = true,
-  cursor_mode = true,
   filetypes = true,
 }
+
+-- Keys this plugin used to accept, with the replacement to point at. Pre-1.0
+-- configs are expected to break loudly rather than silently keep a setting that
+-- no longer does anything (the old pair only worked together: a boolean that
+-- meant "cursor-only" plus a string that picked the channel).
+local REMOVED_INTEGRATION_KEYS = {
+  only_render_at_cursor = 'use at = "cursor" instead',
+  cursor_mode = 'use at = "cursor" with mode = "popup" instead',
+}
+
+---Validate a placement/mode pair. Raises so a misconfiguration cannot reach a
+---render pass, where the only honest outcome would be "draw nothing at 0,0".
+---@param at WrfmPlacement? nil = no placement (allowed; callers decide the fallback)
+---@param mode WrfmInlineMode?
+---@param where string call site for the error message, e.g. "wrfm.attach"
+local function check_placement(at, mode, where)
+  if mode ~= nil and mode ~= "overlay" and mode ~= "popup" then
+    error(('%s: mode must be "overlay" or "popup", got %s'):format(where, vim.inspect(mode)), 0)
+  end
+  if at == nil then
+    if mode == "popup" then
+      error(('%s: mode = "popup" needs at = "cursor"'):format(where), 0)
+    end
+    return
+  end
+  if at == "cursor" then
+    return
+  end
+  if type(at) ~= "table" then
+    error(
+      ('%s: at must be "cursor" or { line = <int>, col = <int> }, got %s'):format(
+        where,
+        vim.inspect(at)
+      ),
+      0
+    )
+  end
+  if type(at.line) ~= "number" or at.line < 0 or at.line % 1 ~= 0 then
+    error(
+      ("%s: at.line must be a non-negative integer, got %s"):format(where, vim.inspect(at.line)),
+      0
+    )
+  end
+  if at.col ~= nil and (type(at.col) ~= "number" or at.col < 0 or at.col % 1 ~= 0) then
+    error(
+      ("%s: at.col must be a non-negative integer, got %s"):format(where, vim.inspect(at.col)),
+      0
+    )
+  end
+  if mode == "popup" then
+    error(('%s: mode = "popup" anchors at the cursor; use at = "cursor"'):format(where), 0)
+  end
+end
 
 -- Defaults live in a plain data table so setup() can validate keys without
 -- mistaking legitimate nil values (default_width etc.) for typos.
@@ -97,10 +170,17 @@ M.config = {
   fps = 60,
   integrations = {
     wrfm = {
-      enabled = true,
+      -- Off by default, and deliberately so: the FileType hook below paints a
+      -- preview into buffers you merely opened. The image.nvim rule applies --
+      -- render where the document asks, never because a buffer was displayed.
+      enabled = false,
+      -- No default placement. Enabling the integration without naming a place
+      -- attaches nothing: a preview is the conjunction of "rendering is on" and
+      -- "a position was specified", and this key is the second half. Set it to
+      -- "cursor" or { line = <int>, col = <int> } to actually get a preview.
+      at = nil,
+      mode = "overlay",
       clear_in_insert_mode = false,
-      only_render_at_cursor = false,
-      cursor_mode = "popup",
       filetypes = { "wrfm" },
     },
   },
@@ -118,12 +198,14 @@ local highlight_explicit = false
 -- setup() is optional, so registration cannot depend on it (this deliberately
 -- differs from image.nvim, which hooks in setup()).
 local resize_augroup = nil
--- Integration hooks (FileType auto-attach etc.) register at load time via
--- the plugin/ entry.
+-- Integration hooks (FileType auto-attach etc.) register from setup() or the
+-- plugin/ entry, and only while integrations.wrfm.enabled is true.
 local integration_augroup = nil
--- True while the cursor-follow hooks (CursorMoved -> _follow_cursor) are
--- registered; popup rendering consults it to skip its one-shot self-destruct.
-local cursor_follow_armed = false
+-- Cursor-follow hooks (CursorMoved -> _follow_cursor) for models placed with
+-- `at = "cursor"`. Registered lazily when such a model appears and deliberately
+-- independent of the integration: asking for a cursor-placed preview is an
+-- explicit request, whether it came from setup() or from :WrfmHere.
+local cursor_follow_augroup = nil
 
 ---Merge into the current defaults; unknown keys raise to catch typos.
 ---@param options WrfmConfig?
@@ -155,16 +237,28 @@ function M.setup(options)
       for sub_key, sub_value in pairs(value) do
         if sub_key == "wrfm" and type(sub_value) == "table" then
           for integration_key in pairs(sub_value) do
+            local removed = REMOVED_INTEGRATION_KEYS[integration_key]
+            if removed then
+              error(
+                ("wrfm.setup: integrations.wrfm.%s was removed; %s"):format(
+                  integration_key,
+                  removed
+                ),
+                0
+              )
+            end
             if not KNOWN_INTEGRATION_KEYS[integration_key] then
               error(("wrfm.setup: unknown integration option '%s'"):format(integration_key), 0)
             end
           end
-          M.config.integrations.wrfm =
-            vim.tbl_deep_extend("force", M.config.integrations.wrfm, sub_value)
+          -- Validate before merging: a bad placement must not leave the config
+          -- half-updated (the hook would then attach from a broken value).
+          local probe = vim.tbl_deep_extend("force", M.config.integrations.wrfm, sub_value)
+          check_placement(probe.at, probe.mode, "wrfm.setup: integrations.wrfm")
+          M.config.integrations.wrfm = probe
           -- Drop hooks registered with the previous patterns; the next
           -- _ensure_integration_hooks() rebuilds them from the new config.
           integration_augroup = nil
-          cursor_follow_armed = false
         else
           error(("wrfm.setup: unknown integration '%s'"):format(sub_key), 0)
         end
@@ -179,6 +273,10 @@ function M.setup(options)
   end
   -- Recolor from the merged config; raises on an invalid highlight value.
   M._apply_highlight()
+  -- Arm the FileType hook under the merged config. The integration is off by
+  -- default, so this call is what actually registers the hook for a user who
+  -- opts in; a user who never mentions `integrations` keeps it unregistered.
+  M._ensure_integration_hooks()
 end
 
 ---Apply the configured wireframe color to the WrfmPreview highlight group.
@@ -215,11 +313,27 @@ M.enabled = true
 
 local next_id = 0
 
----Whether the cursor-follow hooks are currently registered.
+---Register the cursor-follow hook: every inline model placed with
+---`at = "cursor"` re-anchors when the cursor moves. It carries no filetype
+---pattern on purpose — the callback looks for cursor-placed models in whichever
+---buffer moved, so a preview attached by hand (:WrfmHere) follows exactly like
+---one that came from the integration config.
 ---@private
----@return boolean
-function M._cursor_follow_armed()
-  return cursor_follow_armed
+function M._ensure_cursor_follow()
+  if cursor_follow_augroup then
+    return
+  end
+  cursor_follow_augroup = vim.api.nvim_create_augroup("wrfm.cursor_follow", { clear = true })
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = cursor_follow_augroup,
+    callback = function(args)
+      for _, model in ipairs(M.get_models({ buffer = args.buf })) do
+        if model.inline and model.placement == "cursor" then
+          model:_follow_cursor()
+        end
+      end
+    end,
+  })
 end
 
 function M._ensure_resize_hooks()
@@ -488,10 +602,14 @@ function M._ensure_integration_hooks()
   end
   local cfg = M.config.integrations.wrfm
   if not cfg.enabled then
+    -- The integration is off. setup() drops the sentinel but the autocmds it
+    -- registered live on in their augroup, so delete them for real: disabling
+    -- the integration (or never enabling it) must stop the FileType hook from
+    -- attaching previews, not just stop re-registering it.
+    pcall(vim.api.nvim_del_augroup_by_name, "wrfm.integrations")
     return
   end
   integration_augroup = vim.api.nvim_create_augroup("wrfm.integrations", { clear = true })
-  cursor_follow_armed = false
   vim.api.nvim_create_autocmd("FileType", {
     group = integration_augroup,
     pattern = cfg.filetypes,
@@ -501,29 +619,24 @@ function M._ensure_integration_hooks()
       if path == "" then
         return
       end
-      local ok, err = pcall(M.attach, bufnr, { path = path })
+      -- Second precondition: enabled alone never paints. Without a placement
+      -- there is nowhere to draw, so the hook stays quiet and says why once —
+      -- the old behavior (invent (0,0) and cover the buffer's first lines) is
+      -- exactly what this refuses to do.
+      if cfg.at == nil then
+        vim.notify_once(
+          "wrfm: integrations.wrfm.enabled is on but integrations.wrfm.at is unset; "
+            .. 'nothing is attached. Set at = "cursor" or at = { line = <int>, col = <int> }.',
+          vim.log.levels.WARN
+        )
+        return
+      end
+      local ok, err = pcall(M.attach, bufnr, { path = path, at = cfg.at, mode = cfg.mode })
       if not ok then
         vim.notify_once("wrfm: auto-attach failed: " .. tostring(err), vim.log.levels.WARN)
       end
     end,
   })
-  if cfg.only_render_at_cursor then
-    -- Cursor-follow: cursor-only previews re-anchor on every move instead of
-    -- closing on the first one (the popup's one-shot self-destruct stands
-    -- down while this is armed).
-    cursor_follow_armed = true
-    vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-      group = integration_augroup,
-      pattern = cfg.filetypes,
-      callback = function(args)
-        for _, model in ipairs(M.get_models({ buffer = args.buf })) do
-          if model.inline and model.only_render_at_cursor then
-            model:_follow_cursor()
-          end
-        end
-      end,
-    })
-  end
   if cfg.clear_in_insert_mode then
     vim.api.nvim_create_autocmd("InsertEnter", {
       group = integration_augroup,
@@ -555,6 +668,13 @@ end
 ---filepath (used to locate the `.wrfm` source); pass `path` to override.
 ---Attaching to a buffer that already carries an inline preview re-renders it
 ---instead of stacking a second one.
+---
+---`opts.at` is the placement and is required — `"cursor"`, or a table pinning
+---the canvas' top-left cell to a 0-based buffer (line, col). When it is omitted
+---the integration default `integrations.wrfm.at` is used; if that is unset too
+---this raises rather than picking a spot of its own, because an inline preview
+---writes into cells the buffer already owns and guessing there is how the
+---preview ends up painted across text nobody asked it to touch.
 ---@param bufnr integer
 ---@param opts? WrfmModelOptions
 ---@return WrfmModel
@@ -571,19 +691,38 @@ function M.attach(bufnr, opts)
   if path == "" then
     error("wrfm.attach: buffer has no file name; pass opts.path", 0)
   end
+  for _, removed in ipairs({ "only_render_at_cursor", "cursor_mode" }) do
+    if opts[removed] ~= nil then
+      local replacement = removed == "only_render_at_cursor" and 'at = "cursor"'
+        or 'at = "cursor" with mode = "popup"'
+      error(("wrfm.attach: %s was removed; use %s"):format(removed, replacement), 0)
+    end
+  end
   local int_cfg = M.config.integrations.wrfm
+  local at = opts.at
+  if at == nil then
+    at = int_cfg.at
+  end
+  local mode = opts.mode or int_cfg.mode
+  check_placement(at, mode, "wrfm.attach")
+  if at == nil then
+    error(
+      'wrfm.attach: no position given; pass at = "cursor" or at = { line = <int>, col = <int> } '
+        .. "(or set integrations.wrfm.at)",
+      0
+    )
+  end
   local model = M.from_file(path, opts)
   model.inline = true
   model.inline_bufnr = bufnr
   model.inline_ns = M.inline_ns
   model.owns_buffer = false
   model.bufnr = bufnr
-  model.only_render_at_cursor = opts.only_render_at_cursor
-  if model.only_render_at_cursor == nil then
-    model.only_render_at_cursor = int_cfg.only_render_at_cursor
+  model.placement = at
+  model.mode = mode
+  if at == "cursor" then
+    M._ensure_cursor_follow()
   end
-  model.cursor_mode = opts.cursor_mode or int_cfg.cursor_mode
-  M._ensure_integration_hooks()
   model:render()
   return model
 end

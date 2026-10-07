@@ -35,24 +35,32 @@ function M.mixin(Model)
   end
 
   ---The (line, col) in the inline buffer that the canvas' top-left cell
-  ---(absolute (0, 0)) maps to. The canvas never moves horizontally (column 0),
-  ---and its top row follows the same anchor the old virt_lines path used: line
-  ---0 for a normal preview, the cursor line for `only_render_at_cursor`.
+  ---(absolute (0, 0)) maps to, taken from the model's placement. Returns nil
+  ---when the model carries no placement: that is the "rendering is on but
+  ---nothing was placed" case, and the caller must paint nothing rather than
+  ---invent a spot.
   ---@private
-  ---@return integer line
-  ---@return integer col
+  ---@return integer? line
+  ---@return integer? col
   function Model:_overlay_origin()
-    local line = 0
-    if self.only_render_at_cursor and self.inline_bufnr then
-      local wins = vim.fn.win_findbuf(self.inline_bufnr)
-      if #wins > 0 then
-        local ok, pos = pcall(vim.api.nvim_win_get_cursor, wins[1])
-        if ok and pos then
-          line = math.max(pos[1] - 1, 0)
+    local at = self.placement
+    if at == nil then
+      return nil
+    end
+    if at == "cursor" then
+      local line = 0
+      if self.inline_bufnr then
+        local wins = vim.fn.win_findbuf(self.inline_bufnr)
+        if #wins > 0 then
+          local ok, pos = pcall(vim.api.nvim_win_get_cursor, wins[1])
+          if ok and pos then
+            line = math.max(pos[1] - 1, 0)
+          end
         end
       end
+      return line, 0
     end
-    return line, 0
+    return at.line, at.col or 0
   end
 
   ---Bleed cells needed to expose the whole painted footprint, or nil when the
@@ -96,6 +104,16 @@ function M.mixin(Model)
 
     local view = self:_view()
     local origin_line, origin_col = self:_overlay_origin()
+    if origin_line == nil then
+      -- No placement: refuse to draw anywhere. Reaching here means a model was
+      -- rendered without going through wrfm.attach()'s precondition, so say so
+      -- once instead of quietly covering the buffer's first lines.
+      self:_overlay_warn(
+        ("wrfm: %s has no placement (at unset); nothing rendered. Pass "):format(tostring(self.id))
+          .. 'at = "cursor" or at = { line = <int>, col = <int> } to attach a preview.'
+      )
+      return
+    end
     self.overlay_row, self.overlay_col = origin_line, origin_col
 
     local raster = renderer.rasterize(self, view, self:_bleed(view))
@@ -232,10 +250,11 @@ function M.mixin(Model)
     self.popup_winid = nil
   end
 
-  ---Show a one-shot floating preview at the cursor; closes on CursorMoved.
-  ---While the integration cursor-follow hooks are armed (cursor-only mode),
-  ---the popup is instead reopened at each new cursor position by
-  ---_follow_cursor, so no self-destruct autocmd is registered here.
+  ---Open the floating cursor popup (`mode = "popup"`). It lives until the model
+  ---is cleared or hidden and is repositioned by the cursor-follow hook, which is
+  ---always registered for `at = "cursor"` models (popups are cursor-only by
+  ---validation), so there is no one-shot self-destruct here: the popup is an
+  ---explicitly placed preview, not a glance that evaporates on the next key.
   ---@private
   function Model:_render_popup()
     self:_close_popup()
@@ -263,22 +282,13 @@ function M.mixin(Model)
       focusable = false,
       noautocmd = true,
     })
-    local follow_active = self.only_render_at_cursor and require("wrfm")._cursor_follow_armed()
-    if not follow_active then
-      vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
-        once = true,
-        callback = function()
-          self:_close_popup()
-        end,
-      })
-    end
   end
 
-  ---Cursor-follow step for cursor-only models: reopen the popup at the moved
+  ---Cursor-follow step for cursor-placed models: reopen the popup at the moved
   ---cursor, or re-anchor the inline overlay to the new cursor line.
   ---@private
   function Model:_follow_cursor()
-    if self.cursor_mode == "popup" then
+    if self:_uses_popup() then
       self:_render_popup() -- reopens at the current cursor position
     else
       self:_render_inline()

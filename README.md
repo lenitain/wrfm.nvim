@@ -2,7 +2,7 @@
 
 Braille wireframe viewer for Neovim — render [`.wrfm`](https://github.com/Vaishnav-Sabari-Girish/wireforge/tree/main/crates/wrfm) 3D models as Unicode braille art.
 
-![wrfm demo](assets/wrfm-loop.webp)
+https://github.com/user-attachments/assets/aec0945f-111d-4250-af11-c780ee8d8914
 
 We provide:
 
@@ -94,11 +94,12 @@ require("wrfm").setup({
   -- Inline preview
   integrations = {
     wrfm = {
-      enabled = true,                     -- auto-attach for *.wrfm buffers
+      enabled = false,                    -- opt-in auto-attach (see below)
+      at = nil,                           -- REQUIRED to paint: "cursor" or
+                                          -- { line = <int>, col = <int> }
+      mode = "overlay",                   -- "overlay" (extmark) or "popup"
       clear_in_insert_mode = false,       -- hide during insert mode
-      only_render_at_cursor = false,      -- show only near cursor
-      cursor_mode = "popup",              -- "popup" (float) or "inline" (extmark)
-      filetypes = { "wrfm" },
+      filetypes = { "wrfm" },             -- host filetypes to auto-attach to
     },
   },
 })
@@ -187,11 +188,14 @@ local model = require("wrfm").from_file("anvil.wrfm", {
 <summary>Attach inline preview to a buffer</summary>
 
 ```lua
-local model = require("wrfm").attach(bufnr, { path = "model.wrfm" })
+-- `at` is required: no position, no preview
+local model = require("wrfm").attach(bufnr, { path = "model.wrfm", at = { line = 0, col = 0 } })
+local follows = require("wrfm").attach(bufnr, { path = "model.wrfm", at = "cursor" })
 require("wrfm").detach(bufnr)
 ```
 
-`:WrfmHere` / `:WrfmDetach` do the same from the command line.
+`:WrfmHere` / `:WrfmDetach` do the same from the command line (`:WrfmHere`
+places the preview at the cursor).
 
 </details>
 
@@ -324,7 +328,7 @@ Camera, spin, and watch state survive the round trip.
 | `:Wrfm [file]`    | View a [`.wrfm`](https://github.com/Vaishnav-Sabari-Girish/wireforge/tree/main/crates/wrfm) file (defaults to the current buffer's file) in a floating window; repeating it re-renders the existing viewer for that file |
 | `:WrfmClear [id]` | Close viewers: with `id`, exactly that one (every match); without, all of them                                                                                                                                           |
 | `:WrfmList`       | List live viewers: id, mode, spin state, source path                                                                                                                                                                     |
-| `:WrfmHere`       | Attach inline preview to the current buffer (idempotent per buffer)                                                                                                                                                      |
+| `:WrfmHere`       | Attach an inline preview at the cursor (idempotent per buffer)                                                                                                                                                           |
 | `:WrfmDetach`     | Detach inline preview from the current buffer                                                                                                                                                                            |
 | `:WrfmReport`     | Floating diagnostic report: system info + live snapshot of every model                                                                                                                                                   |
 
@@ -342,10 +346,35 @@ itself using a virt_text overlay extmark — the artwork is composited on top
 of the buffer's real text cells, so the source text scrolls with the buffer
 and is never pushed apart.
 
-When `only_render_at_cursor` is true, the preview appears near the cursor
-line only. `cursor_mode = "popup"` shows a temporary floating window;
-`"inline"` anchors the overlay to the cursor line — and in cursor-only mode
-the preview follows the cursor as it moves, in both modes.
+A preview never appears on its own. Rendering is the conjunction of two
+preconditions — **rendering is on** and **a position was specified** — and
+neither alone paints anything:
+
+```lua
+local wrfm = require("wrfm").attach(bufnr, { at = { line = 0, col = 0 } })  -- fixed
+local at_cursor = require("wrfm").attach(bufnr, { at = "cursor" })          -- follows the cursor
+```
+
+`at` is the placement: `"cursor"`, or a table pinning the canvas' top-left
+cell to a 0-based buffer `(line, col)`. Without one, `attach()` raises and
+never guesses — an inline preview writes into cells the buffer already owns, so
+"draw it wherever" is not a thing this plugin can mean. `:WrfmHere` is the
+one-liner form and states its position itself: the cursor.
+
+`setup()` merges its options, so a key can be given a value but not un-set from
+config: to return to "no placement" at runtime, clear
+`require("wrfm").config.integrations.wrfm.at` directly (or restart Neovim).
+
+The same rule governs the `integrations.wrfm` auto-attach hook, which is
+**opt-in** (`enabled = false` by default) *and* unplaced by default (`at = nil`):
+turning it on without naming a place attaches nothing, and says so once. This is
+the image.nvim rule — render where the document asks for it, never because a
+buffer happened to be opened.
+
+`mode` picks the channel: `"overlay"` (default) composites into the buffer's
+own cells, `"popup"` opens a floating window at the cursor (so it requires
+`at = "cursor"`). A cursor placement follows the cursor as it moves, in both
+modes; a fixed placement stays exactly where it was put.
 
 Because the overlay shares cells with the buffer, two options control how it
 composites with whatever is already there:
